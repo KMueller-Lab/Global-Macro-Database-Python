@@ -61,14 +61,13 @@ df = gmd(version="2025_01", country=["USA", "CHN"], variables=["rGDP", "unemp", 
 - **show_preview (bool)**: If True and no other parameters are provided, shows a preview.
 
 ## Release schedule 
-
-| Release Date | Details          |
-|--------------|------------------|
-| 2025-01-30   | Initial release: v2025-01 |
-| 2025-04-01   | v2025-04         |
-| 2025-07-01   | v2025-09         |
-| 2025-10-01   | v2025-12         |
-| 2026-01-01   | v2026-03         |
+| Release Date | Details         |
+|--------------|-----------------|
+| 2025-01-30   | Initial release: 2025_01 |
+| 2025-04-01   | 2025_03         |
+| 2025-07-01   | 2025_06         |
+| 2025-10-01   | 2025_09         |
+| 2026-01-01   | 2025_12         |
 
 ## Citation
 
