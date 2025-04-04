@@ -24,7 +24,7 @@ setup(
     description="Global Macro Database by Karsten Müller, Chenzi Xu, Mohamed Lehbib and Ziliang Chen (2025)",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/KMueller-Lab/global_macro_data_python",
+    url="https://github.com/KMueller-Lab/Global-Macro-Database-Python",
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
