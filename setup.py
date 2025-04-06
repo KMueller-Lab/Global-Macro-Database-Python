@@ -9,7 +9,7 @@ def read_readme():
 from setuptools import setup, find_packages
 
 setup(
-    name="global_macro_data",
+    name="global-macro-data",
     version="0.3.1",
     packages=find_packages(),
     package_data={
