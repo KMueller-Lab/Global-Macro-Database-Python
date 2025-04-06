@@ -10,7 +10,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="global_macro_data",
-    version="0.3.0",
+    version="0.3.1",
     packages=find_packages(),
     package_data={
         "global_macro_data": ["isomapping.csv"],
