@@ -14,5 +14,6 @@ __all__ = [
     "get_current_version",
     "list_variables",
     "list_countries",
+    "enable_verbose_logging",
     "VALID_VARIABLES"
 ]
