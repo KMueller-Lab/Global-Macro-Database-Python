@@ -141,14 +141,12 @@ def list_countries() -> None:
         raise Exception(f"Error loading country list: {str(e)}")
 
 
-def gmd(
+def get_data(
     variables: Optional[Union[str, List[str]]] = None,
     country: Optional[Union[str, List[str]]] = None,
     version: Optional[str] = None,
     raw: bool = False,
-    iso: bool = False,
-    vars: bool = False
-) -> Optional[pd.DataFrame]:
+) -> pd.DataFrame:
     """
     Download and filter Global Macro Data.
 
@@ -162,10 +160,6 @@ def gmd(
         Dataset version in 'YYYY_MM' format (e.g., '2025_01').
     raw : bool, default=False
         If True, download raw data for a single variable only.
-    iso : bool, default=False
-        If True, display the list of available countries and return None.
-    vars : bool, default=False
-        If True, display the list of available variables and return None.
 
     Returns
     -------
@@ -175,15 +169,6 @@ def gmd(
     """
 
     base_url = "https://www.globalmacrodata.com"
-
-    # Handle special display options
-    if iso:
-        list_countries()
-        return None
-
-    if vars:
-        list_variables()
-        return None
 
     # Validate variables before proceeding
     if variables:

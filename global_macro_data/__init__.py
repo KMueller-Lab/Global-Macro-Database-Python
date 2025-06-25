@@ -1,5 +1,5 @@
 from .gmd import (
-    gmd,
+    get_data,
     get_available_versions,
     get_current_version,
     list_variables,
@@ -8,7 +8,7 @@ from .gmd import (
 )
 
 __all__ = [
-    "gmd",
+    "get_data",
     "get_available_versions",
     "get_current_version",
     "list_variables",
