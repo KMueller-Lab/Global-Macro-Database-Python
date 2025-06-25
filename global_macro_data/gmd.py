@@ -274,7 +274,7 @@ def get_data(
         return None
 
     if raw:
-        n_sources = len(df.columns) - 8  # Subtract identifier columns
+        n_sources = len(df.columns) - 7  # Subtract identifier columns
         logger.info(f"Final dataset: {len(df)} "
                     f"observations of {n_sources} sources")
     else:
