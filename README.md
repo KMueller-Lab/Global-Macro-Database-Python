@@ -30,47 +30,52 @@ pip install global_macro_data
 
 **How to use (examples)**
 ```python
-from global_macro_data import gmd
+import global_macro_data as gmd
 
 # Get data from latest available version
-df = gmd()
+df = gmd.get_data()
 
 # Get data from a specific version
-df = gmd(version="2025_01")
+df = gmd.get_data(version="2025_01")
 
 # Get data for a specific country
-df = gmd(country="USA")
+df = gmd.get_data(country="USA")
 
 # Get data for multiple countries
-df = gmd(country=["USA", "CHN", "DEU"])
+df = gmd.get_data(country=["USA", "CHN", "Germany"])
 
 # Get specific variables
-df = gmd(variables=["rGDP", "infl", "unemp"])
+df = gmd.get_data(variables=["rGDP", "infl", "unemp"])
 
 # Get raw data for a single variable
-df = gmd(variables="rGDP", raw=True)
+df = gmd.get_data(variables="rGDP", raw=True)
 
 # List available variables and their descriptions
-gmd(vars=True)
+gmd.list_variables()
 
 # List available countries and their ISO codes
-gmd(iso=True)
+gmd.list_countries()
+
+# List available versions
+gmd.list_versions()
 
 # Combine parameters
-df = gmd(
+df = gmd.get_data(
     version="2025_01",
     country=["USA", "CHN"],
     variables=["rGDP", "unemp", "CPI"]
 )
+
+# Enable verbose logging (INFO-level and above)
+gmd.enable_verbose_logging()
 ```
 
-## Parameters
+## Parameters for `gmd.get_data()`
 - **variables (str or list)**: Variable code(s) to include (e.g., "rGDP" or ["rGDP", "unemp"])
-- **country (str or list)**: ISO3 country code(s) (e.g., "SGP" or ["MRT", "SGP"])
+- **country (str or list)**: Country name or ISO3 country code(s) (e.g., "SGP" or ["MRT", "SGP"])
 - **version (str)**: Dataset version in format 'YYYY_MM' (e.g., '2025_01'). If None or "current", uses the latest version
 - **raw (bool)**: If True, download raw data for a single variable
-- **iso (bool)**: If True, display list of available countries
-- **vars (bool)**: If True, display list of available variables
+
 
 ## Release schedule 
 | Release Date | Details         |
