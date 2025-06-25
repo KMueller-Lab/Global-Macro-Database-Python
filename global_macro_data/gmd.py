@@ -44,7 +44,7 @@ VALID_VARIABLES = [
 ]
 
 
-def get_available_versions() -> List[str]:
+def list_versions() -> List[str]:
     """Get list of available versions from GitHub"""
     try:
         versions_url = (
@@ -64,12 +64,13 @@ def get_available_versions() -> List[str]:
 
 def get_current_version() -> str:
     """Get the current version of the dataset"""
-    versions = get_available_versions()
+    versions = list_versions()
     return versions[0] if versions else None
 
 
 def list_variables() -> pd.DataFrame:
     """Return list of available variables and their descriptions."""
+    global VALID_VARIABLES
     descriptions = {
         'nGDP': 'Nominal Gross Domestic Product',
         'rGDP': 'Real Gross Domestic Product, in 2010 prices',
@@ -161,10 +162,10 @@ def get_data(
     Returns
     -------
     pd.DataFrame or None
-        Filtered macroeconomic data as a DataFrame, or None if displaying
-        metadata.
+        Filtered macroeconomic data as a DataFrame, or None if no data
+        available.
     """
-
+    global VALID_VARIABLES
     base_url = "https://www.globalmacrodata.com"
 
     # Validate variables before proceeding
@@ -186,12 +187,10 @@ def get_data(
         version = get_current_version()
     else:
         # Check if version exists
-        available_versions = get_available_versions()
+        available_versions = list_versions()
         if version not in available_versions:
             raise InvalidVersionError(
                 requested_version=version,
-                available=available_versions,
-                current=get_current_version()
             )
 
     # Handle raw data option
@@ -281,7 +280,8 @@ def get_data(
     # Sort and order columns
     df = df.sort_values(['countryname', 'year'])
     id_cols = ['ISO3', 'countryname', 'year']
-    other_cols = [col for col in df.columns if col not in id_cols]
+    other_cols = [col for col in df.columns
+                  if (col not in id_cols) and col in VALID_VARIABLES]
     df = df[id_cols + other_cols]
 
     return df

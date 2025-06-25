@@ -31,21 +31,13 @@ class InvalidVariableError(ValueError):
 class InvalidVersionError(ValueError):
     """Raised when a requested dataset version does not exist."""
 
-    def __init__(
-        self, requested_version: str,
-        available: list[str],
-        current: str
-    ):
+    def __init__(self, requested_version: str):
 
         self.requested_version = requested_version
-        self.available_versions = available
-        self.current_version = current
-
         message = (
             INTRO +
             f"Error: '{requested_version}' is not a valid dataset version.\n"
-            f"Available versions: {', '.join(available)}\n"
-            f"Current version: {current}"
+            "To see the list of valid versions, use: gmd.list_versions()"
         )
         super().__init__(message)
 
@@ -58,7 +50,7 @@ class RawModeError(ValueError):
             INTRO +
             "'raw=True' requires specifying exactly one variable.\n"
             "Raw data is only accessed variable-wise using: "
-            "gmd(variable, raw=True)\n"
+            "gmd.get_data(variable, raw=True)\n"
             "For full documentation: https://www.globalmacrodata.com/GMD.xlsx"
         )
         super().__init__(message)

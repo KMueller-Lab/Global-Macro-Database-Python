@@ -2,7 +2,7 @@ import pytest
 import pandas as pd
 from global_macro_data import (
     get_data,
-    get_available_versions,
+    list_versions,
     get_current_version,
     list_variables,
     list_countries,
@@ -11,7 +11,7 @@ from global_macro_data import (
 
 def test_get_available_versions():
     """Test getting available versions"""
-    versions = get_available_versions()
+    versions = list_versions()
     assert isinstance(versions, list)
     assert len(versions) > 0
     assert all(isinstance(v, str) for v in versions)

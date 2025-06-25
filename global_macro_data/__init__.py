@@ -1,6 +1,6 @@
 from global_macro_data.gmd import (
     get_data,
-    get_available_versions,
+    list_versions,
     get_current_version,
     list_variables,
     list_countries,
@@ -10,7 +10,7 @@ from global_macro_data.logging import enable_verbose_logging
 
 __all__ = [
     "get_data",
-    "get_available_versions",
+    "list_versions",
     "get_current_version",
     "list_variables",
     "list_countries",
