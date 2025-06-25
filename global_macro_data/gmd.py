@@ -153,7 +153,8 @@ def get_data(
     variables : str or list of str, optional
         Variable code(s) to include (e.g., 'rGDP' or ['rGDP', 'unemp']).
     country : str or list of str, optional
-        ISO3 country code(s) to include (e.g., 'SGP' or ['MRT', 'SGP']).
+        Country or ISO3 country code(s) to include (e.g., 'SGP' or
+        ['MRT', 'SGP']).
     version : str, optional
         Dataset version in 'YYYY_MM' format (e.g., '2025_01').
     raw : bool, default=False
@@ -229,7 +230,14 @@ def get_data(
         if isinstance(country, str):
             country = [country]
 
-        country = [c.upper() for c in country]
+        # Load country name to ISO3 mapping
+        country_df = list_countries()
+        country_df['countryname'] = country_df['countryname'].str.upper()
+        country_to_ISO = (
+            country_df.set_index('countryname')['ISO3'].to_dict()
+        )
+
+        country = [country_to_ISO.get(c.upper(), c.upper()) for c in country]
 
         # Validate country codes
         invalid_countries = [
