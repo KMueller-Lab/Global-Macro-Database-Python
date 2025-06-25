@@ -6,6 +6,7 @@ from global_macro_data.gmd import (
     list_countries,
     VALID_VARIABLES
 )
+from global_macro_data.logging import enable_verbose_logging
 
 __all__ = [
     "get_data",
