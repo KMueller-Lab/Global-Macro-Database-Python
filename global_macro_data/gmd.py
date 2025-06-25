@@ -33,6 +33,7 @@ VALID_VARIABLES = [
     "CurrencyCrisis", "BankingCrisis", "SovDebtCrisis"
 ]
 
+
 def get_available_versions() -> List[str]:
     """Get list of available versions from GitHub"""
     try:
@@ -43,17 +44,19 @@ def get_available_versions() -> List[str]:
         response = requests.get(versions_url)
         if response.status_code != 200:
             raise Exception("Could not fetch versions")
-        
+
         versions_df = pd.read_csv(io.StringIO(response.text))
         versions = versions_df['versions'].tolist()
         return sorted(versions, reverse=True)
     except Exception as e:
         raise Exception(f"Error fetching versions: {str(e)}")
 
+
 def get_current_version() -> str:
     """Get the current version of the dataset"""
     versions = get_available_versions()
     return versions[0] if versions else None
+
 
 def list_variables() -> None:
     """Display list of available variables and their descriptions"""
@@ -61,7 +64,7 @@ def list_variables() -> None:
     print("-" * 90)
     print(f"{'Variable':<17} Description")
     print("-" * 90)
-    
+
     descriptions = {
         "nGDP": "Nominal Gross Domestic Product",
         "rGDP": "Real Gross Domestic Product, in 2010 prices",
@@ -110,11 +113,12 @@ def list_variables() -> None:
         "CurrencyCrisis": "Currency Crisis",
         "BankingCrisis": "Banking Crisis"
     }
-    
+
     for var in sorted(VALID_VARIABLES):
         print(f"{var:<17} {descriptions.get(var, '')}")
-    
+
     print("-" * 90)
+
 
 def list_countries() -> None:
     """Display list of available countries and their ISO codes"""
@@ -125,16 +129,17 @@ def list_countries() -> None:
             os.path.dirname(script_dir), 'isomapping.csv'
         )
         isomapping = pd.read_csv(isomapping_path)
-        
+
         print("\nCountry and territories" + " " * 27 + "Code")
         print("-" * 60)
-        
+
         for _, row in isomapping.iterrows():
             print(f"{row['countryname']:<50} {row['ISO3']}")
-        
+
         print("-" * 60)
     except Exception as e:
         raise Exception(f"Error loading country list: {str(e)}")
+
 
 def gmd(
     variables: Optional[Union[str, List[str]]] = None,
@@ -146,37 +151,45 @@ def gmd(
 ) -> Optional[pd.DataFrame]:
     """
     Download and filter Global Macro Data.
-    
-    Parameters:
-    - variables (str or list): Variable code(s) to include
-        (e.g., "rGDP" or ["rGDP", "unemp"])
-    - country (str or list): ISO3 country code(s)
-        (e.g., "SGP" or ["MRT", "SGP"])
-    - version (str): Dataset version in format 'YYYY_MM'
-        (e.g., '2025_01')
-    - raw (bool): If True, download raw data for a single variable
-    - iso (bool): If True, display list of available countries
-    - vars (bool): If True, display list of available variables
-    
-    Returns:
-    - pd.DataFrame: The requested data, or None if displaying lists
+
+    Parameters
+    ----------
+    variables : str or list of str, optional
+        Variable code(s) to include (e.g., 'rGDP' or ['rGDP', 'unemp']).
+    country : str or list of str, optional
+        ISO3 country code(s) to include (e.g., 'SGP' or ['MRT', 'SGP']).
+    version : str, optional
+        Dataset version in 'YYYY_MM' format (e.g., '2025_01').
+    raw : bool, default=False
+        If True, download raw data for a single variable only.
+    iso : bool, default=False
+        If True, display the list of available countries and return None.
+    vars : bool, default=False
+        If True, display the list of available variables and return None.
+
+    Returns
+    -------
+    pd.DataFrame or None
+        Filtered macroeconomic data as a DataFrame, or None if displaying
+        metadata.
     """
+
     base_url = "https://www.globalmacrodata.com"
-    
+
     # Handle special display options
     if iso:
         list_countries()
         return None
-    
+
     if vars:
         list_variables()
         return None
-    
+
     # Validate variables before proceeding
     if variables:
         if isinstance(variables, str):
             variables = [variables]
-        
+
         # Validate variables
         invalid_vars = [
             var for var in variables if var not in VALID_VARIABLES
@@ -190,7 +203,7 @@ def gmd(
                 "use: gmd(vars=True)"
             )
             sys.exit(1)
-    
+
     # Get current version if not specified
     if version is None:
         version = get_current_version()
@@ -206,21 +219,23 @@ def gmd(
             print(f"Available versions are: {', '.join(available_versions)}")
             print(f"The current version is: {get_current_version()}")
             sys.exit(1)
-    
+
     # Handle raw data option
     if raw:
-        if (not variables or 
-            (isinstance(variables, list) and len(variables) > 1)):
+        if (not variables or
+                (isinstance(variables, list) and len(variables) > 1)):
             print("Global Macro Database by Müller et. al (2025)")
             print("Website: https://www.globalmacrodata.com\n")
             print("Warning: raw requires specifying exactly one variable")
-            print("Note: Raw data is only accessed variable-wise using: gmd [variable], raw")
-            print("To download the full data documentation: https://www.globalmacrodata.com/GMD.xlsx")
+            print("Note: Raw data is only accessed variable-wise using: "
+                  "gmd [variable], raw")
+            print("To download the full data documentation: "
+                  "https://www.globalmacrodata.com/GMD.xlsx")
             sys.exit(1)
-        
+
         if isinstance(variables, list):
             variables = variables[0]
-        
+
         data_url = f"{base_url}/{variables}_{version}.csv"
         print(f"Importing raw data for variable: {variables}")
     else:
@@ -231,7 +246,7 @@ def gmd(
             print(f"Importing data for variable: {variables}")
         else:
             data_url = f"{base_url}/GMD_{version}.csv"
-    
+
     # Download data
     try:
         response = requests.get(data_url)
@@ -241,17 +256,17 @@ def gmd(
         print("Website: https://www.globalmacrodata.com\n")
         print(f"Error downloading data: {str(e)}")
         sys.exit(1)
-    
+
     # Read the data
     df = pd.read_csv(io.StringIO(response.text))
-    
+
     # Filter by country if specified
     if country:
         if isinstance(country, str):
             country = [country]
-        
+
         country = [c.upper() for c in country]
-        
+
         # Validate country codes
         invalid_countries = [
             c for c in country if c not in df["ISO3"].unique()
@@ -260,35 +275,36 @@ def gmd(
             print("Global Macro Database by Müller et. al (2025)")
             print("Website: https://www.globalmacrodata.com\n")
             print(f"Error: Invalid country code '{invalid_countries[0]}'")
-            print("\nTo see the list of valid country codes, use: gmd(iso=True)")
+            print("\nTo see the list of valid country codes, "
+                  "use: gmd(iso=True)")
             sys.exit(1)
-        
+
         df = df[df["ISO3"].isin(country)]
         print(f"Filtered data for countries: {', '.join(country)}")
-    
+
     # Filter by variables if specified
     if variables and not raw:
         if isinstance(variables, str):
             variables = [variables]
-        
+
         # Always include identifier columns
         required_cols = ["ISO3", "countryname", "year"]
         all_cols = required_cols + [
             var for var in variables if var not in required_cols
         ]
-        
+
         # Filter to only include requested variables
         existing_vars = [var for var in all_cols if var in df.columns]
         df = df[existing_vars]
-    
+
     # Clean up missing variables
     df = df.dropna(axis=1, how='all')
-    
+
     # Display dataset information
     if len(df) == 0:
         print(f"The database has no data on {variables} for {country}")
         return None
-    
+
     if raw:
         n_sources = len(df.columns) - 8  # Subtract identifier columns
         print(f"Final dataset: {len(df)} observations of {n_sources} sources")
@@ -297,13 +313,13 @@ def gmd(
             f"Final dataset: {len(df)} observations of "
             f"{len(df.columns)} variables"
         )
-    
+
     print(f"Version: {version}")
-    
+
     # Sort and order columns
     df = df.sort_values(['countryname', 'year'])
     id_cols = ['ISO3', 'countryname', 'year']
     other_cols = [col for col in df.columns if col not in id_cols]
     df = df[id_cols + other_cols]
-    
+
     return df
