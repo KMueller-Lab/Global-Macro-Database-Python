@@ -8,8 +8,14 @@ logger.addHandler(logging.NullHandler())
 
 
 def enable_verbose_logging(level=logging.INFO):
-    """Enable verbose logging for package."""
-    logging.basicConfig(
-        level=level,
-        format='%(levelname)s:%(name)s:%(message)s'
-    )
+    """Enable console logging specifically for the gmd package."""
+    handler = logging.StreamHandler()
+    handler.setLevel(level)
+
+    formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
+    handler.setFormatter(formatter)
+
+    if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+        logger.addHandler(handler)
+
+    logger.setLevel(level)
