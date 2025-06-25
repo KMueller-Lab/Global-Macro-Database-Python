@@ -123,7 +123,7 @@ def list_variables() -> pd.DataFrame:
     return pd.DataFrame({
         'Variable': VALID_VARIABLES,
         'Description': [descriptions.get(var, '') for var in VALID_VARIABLES]
-    }).sort_values('Variable')
+    }).sort_values('Variable').reset_index(drop=True)
 
 
 def list_countries() -> pd.DataFrame:
@@ -289,7 +289,7 @@ def get_data(
     df = df.sort_values(['countryname', 'year'])
     id_cols = ['ISO3', 'countryname', 'year']
     other_cols = [col for col in df.columns
-                  if (col not in id_cols) and col in VALID_VARIABLES]
+                  if (col not in id_cols)]
     df = df[id_cols + other_cols]
 
-    return df
+    return df.drop(columns=['id'], errors='ignore').reset_index(drop=True)
