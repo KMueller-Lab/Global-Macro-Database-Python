@@ -1,9 +1,19 @@
+# Standard library
 import os
-import requests
-import pandas as pd
 import io
 from typing import Optional, Union, List
-import sys
+
+# Third-party
+import pandas as pd
+import requests
+
+# Internal modules
+from .logging import logger
+from .exceptions import (
+    InvalidVariableError, InvalidVersionError, RawModeError,
+    DataDownloadError, InvalidCountryError
+)
+
 
 # Valid variables list
 VALID_VARIABLES = [
@@ -58,87 +68,74 @@ def get_current_version() -> str:
     return versions[0] if versions else None
 
 
-def list_variables() -> None:
-    """Display list of available variables and their descriptions"""
-    print("\nAvailable variables:\n")
-    print("-" * 90)
-    print(f"{'Variable':<17} Description")
-    print("-" * 90)
-
+def list_variables() -> pd.DataFrame:
+    """Return list of available variables and their descriptions."""
     descriptions = {
-        "nGDP": "Nominal Gross Domestic Product",
-        "rGDP": "Real Gross Domestic Product, in 2010 prices",
-        "rGDP_pc": "Real Gross Domestic Product per Capita",
-        "rGDP_USD": "Real Gross Domestic Product in USD",
-        "deflator": "GDP deflator",
-        "cons": "Total Consumption",
-        "rcons": "Real Total Consumption",
-        "cons_GDP": "Total Consumption as % of GDP",
-        "inv": "Total Investment",
-        "inv_GDP": "Total Investment as % of GDP",
-        "finv": "Fixed Investment",
-        "finv_GDP": "Fixed Investment as % of GDP",
-        "exports": "Total Exports",
-        "exports_GDP": "Total Exports as % of GDP",
-        "imports": "Total Imports",
-        "imports_GDP": "Total Imports as % of GDP",
-        "CA": "Current Account Balance",
-        "CA_GDP": "Current Account Balance as % of GDP",
-        "USDfx": "Exchange Rate against USD",
-        "REER": "Real Effective Exchange Rate, 2010 = 100",
-        "govexp": "Government Expenditure",
-        "govexp_GDP": "Government Expenditure as % of GDP",
-        "govrev": "Government Revenue",
-        "govrev_GDP": "Government Revenue as % of GDP",
-        "govtax": "Government Tax Revenue",
-        "govtax_GDP": "Government Tax Revenue as % of GDP",
-        "govdef": "Government Deficit",
-        "govdef_GDP": "Government Deficit as % of GDP",
-        "govdebt": "Government Debt",
-        "govdebt_GDP": "Government Debt as % of GDP",
-        "HPI": "House Price Index",
-        "CPI": "Consumer Price Index, 2010 = 100",
-        "infl": "Inflation Rate",
-        "pop": "Population",
-        "unemp": "Unemployment Rate",
-        "strate": "Short-term Interest Rate",
-        "ltrate": "Long-term Interest Rate",
-        "cbrate": "Central Bank Policy Rate",
-        "M0": "M0 Money Supply",
-        "M1": "M1 Money Supply",
-        "M2": "M2 Money Supply",
-        "M3": "M3 Money Supply",
-        "M4": "M4 Money Supply",
-        "SovDebtCrisis": "Sovereign Debt Crisis",
-        "CurrencyCrisis": "Currency Crisis",
-        "BankingCrisis": "Banking Crisis"
+        'nGDP': 'Nominal Gross Domestic Product',
+        'rGDP': 'Real Gross Domestic Product, in 2010 prices',
+        'rGDP_pc': 'Real Gross Domestic Product per Capita',
+        'rGDP_USD': 'Real Gross Domestic Product in USD',
+        'deflator': 'GDP deflator',
+        'cons': 'Total Consumption',
+        'rcons': 'Real Total Consumption',
+        'cons_GDP': 'Total Consumption as % of GDP',
+        'inv': 'Total Investment',
+        'inv_GDP': 'Total Investment as % of GDP',
+        'finv': 'Fixed Investment',
+        'finv_GDP': 'Fixed Investment as % of GDP',
+        'exports': 'Total Exports',
+        'exports_GDP': 'Total Exports as % of GDP',
+        'imports': 'Total Imports',
+        'imports_GDP': 'Total Imports as % of GDP',
+        'CA': 'Current Account Balance',
+        'CA_GDP': 'Current Account Balance as % of GDP',
+        'USDfx': 'Exchange Rate against USD',
+        'REER': 'Real Effective Exchange Rate, 2010 = 100',
+        'govexp': 'Government Expenditure',
+        'govexp_GDP': 'Government Expenditure as % of GDP',
+        'govrev': 'Government Revenue',
+        'govrev_GDP': 'Government Revenue as % of GDP',
+        'govtax': 'Government Tax Revenue',
+        'govtax_GDP': 'Government Tax Revenue as % of GDP',
+        'govdef': 'Government Deficit',
+        'govdef_GDP': 'Government Deficit as % of GDP',
+        'govdebt': 'Government Debt',
+        'govdebt_GDP': 'Government Debt as % of GDP',
+        'HPI': 'House Price Index',
+        'CPI': 'Consumer Price Index, 2010 = 100',
+        'infl': 'Inflation Rate',
+        'pop': 'Population',
+        'unemp': 'Unemployment Rate',
+        'strate': 'Short-term Interest Rate',
+        'ltrate': 'Long-term Interest Rate',
+        'cbrate': 'Central Bank Policy Rate',
+        'M0': 'M0 Money Supply',
+        'M1': 'M1 Money Supply',
+        'M2': 'M2 Money Supply',
+        'M3': 'M3 Money Supply',
+        'M4': 'M4 Money Supply',
+        'SovDebtCrisis': 'Sovereign Debt Crisis',
+        'CurrencyCrisis': 'Currency Crisis',
+        'BankingCrisis': 'Banking Crisis',
     }
 
-    for var in sorted(VALID_VARIABLES):
-        print(f"{var:<17} {descriptions.get(var, '')}")
+    return pd.DataFrame({
+        'Variable': VALID_VARIABLES,
+        'Description': [descriptions.get(var, '') for var in VALID_VARIABLES]
+    }).sort_values('Variable')
 
-    print("-" * 90)
 
-
-def list_countries() -> None:
-    """Display list of available countries and their ISO codes"""
+def list_countries() -> pd.DataFrame:
+    """Return list of available countries and their ISO3 codes."""
     try:
-        # Load isomapping from the package directory
         script_dir = os.path.dirname(os.path.abspath(__file__))
         isomapping_path = os.path.join(
             os.path.dirname(script_dir), 'isomapping.csv'
         )
-        isomapping = pd.read_csv(isomapping_path)
-
-        print("\nCountry and territories" + " " * 27 + "Code")
-        print("-" * 60)
-
-        for _, row in isomapping.iterrows():
-            print(f"{row['countryname']:<50} {row['ISO3']}")
-
-        print("-" * 60)
+        df = pd.read_csv(isomapping_path)
+        return df[['countryname', 'ISO3']]
     except Exception as e:
-        raise Exception(f"Error loading country list: {str(e)}")
+        raise RuntimeError(f'Error loading country list: {e}')
 
 
 def get_data(
@@ -180,14 +177,7 @@ def get_data(
             var for var in variables if var not in VALID_VARIABLES
         ]
         if invalid_vars:
-            print("Global Macro Database by Müller et. al (2025)")
-            print("Website: https://www.globalmacrodata.com\n")
-            print(f"Invalid variable code: {invalid_vars[0]}")
-            print(
-                "\nTo see the list of valid variable codes, "
-                "use: gmd(vars=True)"
-            )
-            sys.exit(1)
+            raise InvalidVariableError(invalid_vars)
 
     # Get current version if not specified
     if version is None:
@@ -198,49 +188,39 @@ def get_data(
         # Check if version exists
         available_versions = get_available_versions()
         if version not in available_versions:
-            print("Global Macro Database by Müller et. al (2025)")
-            print("Website: https://www.globalmacrodata.com\n")
-            print(f"Error: {version} is not valid")
-            print(f"Available versions are: {', '.join(available_versions)}")
-            print(f"The current version is: {get_current_version()}")
-            sys.exit(1)
+            raise InvalidVersionError(
+                requested_version=version,
+                available=available_versions,
+                current=get_current_version()
+            )
 
     # Handle raw data option
     if raw:
-        if (not variables or
-                (isinstance(variables, list) and len(variables) > 1)):
-            print("Global Macro Database by Müller et. al (2025)")
-            print("Website: https://www.globalmacrodata.com\n")
-            print("Warning: raw requires specifying exactly one variable")
-            print("Note: Raw data is only accessed variable-wise using: "
-                  "gmd [variable], raw")
-            print("To download the full data documentation: "
-                  "https://www.globalmacrodata.com/GMD.xlsx")
-            sys.exit(1)
+        if not variables or \
+                (isinstance(variables, list) and len(variables) > 1):
+            raise RawModeError()
 
         if isinstance(variables, list):
             variables = variables[0]
 
         data_url = f"{base_url}/{variables}_{version}.csv"
-        print(f"Importing raw data for variable: {variables}")
+        logger.info(f'Importing raw data for variable: {variables}')
     else:
         # Handle single variable case for efficiency
         if isinstance(variables, list) and len(variables) == 1:
             variables = variables[0]
             data_url = f"{base_url}/{variables}_{version}.csv"
-            print(f"Importing data for variable: {variables}")
+            logger.info(f'Importing data for variable: {variables}')
         else:
             data_url = f"{base_url}/GMD_{version}.csv"
+            logger.info('Importing data')
 
     # Download data
     try:
         response = requests.get(data_url)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        print("Global Macro Database by Müller et. al (2025)")
-        print("Website: https://www.globalmacrodata.com\n")
-        print(f"Error downloading data: {str(e)}")
-        sys.exit(1)
+        raise DataDownloadError(e)
 
     # Read the data
     df = pd.read_csv(io.StringIO(response.text))
@@ -257,15 +237,10 @@ def get_data(
             c for c in country if c not in df["ISO3"].unique()
         ]
         if invalid_countries:
-            print("Global Macro Database by Müller et. al (2025)")
-            print("Website: https://www.globalmacrodata.com\n")
-            print(f"Error: Invalid country code '{invalid_countries[0]}'")
-            print("\nTo see the list of valid country codes, "
-                  "use: gmd(iso=True)")
-            sys.exit(1)
+            raise InvalidCountryError(invalid_countries)
 
         df = df[df["ISO3"].isin(country)]
-        print(f"Filtered data for countries: {', '.join(country)}")
+        logger.info(f"Filtered data for countries: {', '.join(country)}")
 
     # Filter by variables if specified
     if variables and not raw:
@@ -287,19 +262,21 @@ def get_data(
 
     # Display dataset information
     if len(df) == 0:
-        print(f"The database has no data on {variables} for {country}")
+        logger.warning("The database has no data on "
+                       f"{variables} for {country}")
         return None
 
     if raw:
         n_sources = len(df.columns) - 8  # Subtract identifier columns
-        print(f"Final dataset: {len(df)} observations of {n_sources} sources")
+        logger.info(f"Final dataset: {len(df)} "
+                    f"observations of {n_sources} sources")
     else:
-        print(
+        logger.info(
             f"Final dataset: {len(df)} observations of "
             f"{len(df.columns)} variables"
         )
 
-    print(f"Version: {version}")
+    logger.info(f"Version: {version}")
 
     # Sort and order columns
     df = df.sort_values(['countryname', 'year'])

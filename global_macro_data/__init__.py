@@ -1,4 +1,4 @@
-from .gmd import (
+from global_macro_data.gmd import (
     get_data,
     get_available_versions,
     get_current_version,
