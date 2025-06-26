@@ -69,8 +69,10 @@ def get_current_version() -> str:
     return versions[0] if versions else None
 
 
-def list_variables() -> pd.DataFrame:
-    """Return list of available variables and their descriptions."""
+def list_variables(
+    as_dict: bool = False
+) -> Union[pd.DataFrame, dict[str, str]]:
+    """Return available variable codes and their descriptions."""
     global VALID_VARIABLES
     descriptions = {
         'nGDP': 'Nominal Gross Domestic Product',
@@ -121,20 +123,34 @@ def list_variables() -> pd.DataFrame:
         'BankingCrisis': 'Banking Crisis',
     }
 
-    return pd.DataFrame({
+    data = pd.DataFrame({
         'Variable': VALID_VARIABLES,
         'Description': [descriptions.get(var, '') for var in VALID_VARIABLES]
     }).sort_values('Variable').reset_index(drop=True)
 
+    if as_dict:
+        return data.set_index('Variable').to_dict()
 
-def list_countries() -> dict:
-    """Return dict of available countries and their ISO3 codes."""
+    return data
+
+
+def list_countries(
+    as_dict: bool = False
+) -> Union[pd.DataFrame, dict[str, str]]:
+    """Return countries and their ISO3 codes."""
     try:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        isomapping_path = os.path.join(
-            os.path.dirname(script_dir), 'isomapping.json'
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            '..', 'isomapping.json')
+        data = _load_json(path)
+
+        if as_dict:
+            return data
+
+        return pd.DataFrame(
+            {'Country': list(data.keys()),
+             'ISO3': list(data.values())
+             }
         )
-        return _load_json(isomapping_path)
     except Exception as e:
         raise RuntimeError(f'Error loading country list: {e}')
 
@@ -231,7 +247,9 @@ def get_data(
             country = [country]
 
         # Load country name to ISO3 mapping
-        country_to_ISO = {k.upper(): v for k, v in list_countries().items()}
+        country_to_ISO = {
+            k.upper(): v for k, v in list_countries(as_dict=True).items()
+        }
         country = [country_to_ISO.get(c.upper(), c.upper()) for c in country]
 
         # Validate country codes
