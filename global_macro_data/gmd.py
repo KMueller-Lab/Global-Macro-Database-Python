@@ -2,6 +2,7 @@
 import os
 import io
 from typing import Optional, Union, List
+import json
 
 # Third-party
 import pandas as pd
@@ -126,15 +127,14 @@ def list_variables() -> pd.DataFrame:
     }).sort_values('Variable').reset_index(drop=True)
 
 
-def list_countries() -> pd.DataFrame:
-    """Return list of available countries and their ISO3 codes."""
+def list_countries() -> dict:
+    """Return dict of available countries and their ISO3 codes."""
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         isomapping_path = os.path.join(
-            os.path.dirname(script_dir), 'isomapping.csv'
+            os.path.dirname(script_dir), 'isomapping.json'
         )
-        df = pd.read_csv(isomapping_path)
-        return df[['countryname', 'ISO3']]
+        return _load_json(isomapping_path)
     except Exception as e:
         raise RuntimeError(f'Error loading country list: {e}')
 
@@ -231,12 +231,7 @@ def get_data(
             country = [country]
 
         # Load country name to ISO3 mapping
-        country_df = list_countries()
-        country_df['countryname'] = country_df['countryname'].str.upper()
-        country_to_ISO = (
-            country_df.set_index('countryname')['ISO3'].to_dict()
-        )
-
+        country_to_ISO = {k.upper(): v for k, v in list_countries().items()}
         country = [country_to_ISO.get(c.upper(), c.upper()) for c in country]
 
         # Validate country codes
@@ -293,3 +288,9 @@ def get_data(
     df = df[id_cols + other_cols]
 
     return df.drop(columns=['id'], errors='ignore').reset_index(drop=True)
+
+
+def _load_json(path: str) -> dict:
+    """Load a JSON file as a Python dictionary."""
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
