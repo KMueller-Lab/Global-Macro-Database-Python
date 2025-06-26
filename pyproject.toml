@@ -1,0 +1,33 @@
+[project]
+name = "global-macro-data"
+version = "0.3.1"
+description = "Global Macro Database by Karsten Müller, Chenzi Xu, Mohamed Lehbib and Ziliang Chen (2025)"
+readme = "README.md"
+authors = [
+    { name = "Yangbo Wang", email = "wangyangbo@ruc.edu.cn" }
+]
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "pandas>=1.5.3",
+    "requests>=2.31.0"
+]
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent"
+]
+
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["global_macro_data"]
+
+[tool.setuptools.package-data]
+global_macro_data = ["isomapping.json"]
+
+[project.urls]
+Homepage = "https://github.com/KMueller-Lab/Global-Macro-Database-Python"

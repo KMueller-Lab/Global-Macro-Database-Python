@@ -1,8 +1,8 @@
 # Standard library
-import os
 import io
 from typing import Optional, Union, List
 import json
+import importlib.resources
 
 # Third-party
 import pandas as pd
@@ -139,9 +139,9 @@ def list_countries(
 ) -> Union[pd.DataFrame, dict[str, str]]:
     """Return countries and their ISO3 codes."""
     try:
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            '..', 'isomapping.json')
-        data = _load_json(path)
+        with importlib.resources.files('global_macro_data')\
+                .joinpath('isomapping.json').open('r', encoding='utf-8') as f:
+            data = json.load(f)
 
         if as_dict:
             return data
@@ -306,9 +306,3 @@ def get_data(
     df = df[id_cols + other_cols]
 
     return df.drop(columns=['id'], errors='ignore').reset_index(drop=True)
-
-
-def _load_json(path: str) -> dict:
-    """Load a JSON file as a Python dictionary."""
-    with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)

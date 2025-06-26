@@ -1,2 +1,11 @@
-requests
-pandas
+certifi==2025.6.15
+charset-normalizer==3.4.2
+idna==3.10
+numpy==2.3.1
+pandas==2.3.0
+python-dateutil==2.9.0.post0
+pytz==2025.2
+requests==2.32.4
+six==1.17.0
+tzdata==2025.2
+urllib3==2.5.0
