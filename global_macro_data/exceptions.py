@@ -1,3 +1,6 @@
+from typing import List
+
+
 INTRO = (
     "\nGlobal Macro Database by Müller et al. (2025)\n"
     "Website: https://www.globalmacrodata.com\n\n"
@@ -7,7 +10,7 @@ INTRO = (
 class InvalidVariableError(ValueError):
     """Raised when one or more variable codes are invalid."""
 
-    def __init__(self, invalid_vars: list[str]):
+    def __init__(self, invalid_vars: List[str]):
         self.invalid_vars = invalid_vars
 
         # Format variable list nicely
@@ -71,7 +74,7 @@ class DataDownloadError(ConnectionError):
 class InvalidCountryError(ValueError):
     """Raised when one or more country codes are invalid."""
 
-    def __init__(self, invalid_codes: list[str]):
+    def __init__(self, invalid_codes: List[str]):
         self.invalid_codes = invalid_codes
 
         if len(invalid_codes) == 1:

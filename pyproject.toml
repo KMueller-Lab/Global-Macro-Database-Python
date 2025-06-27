@@ -1,16 +1,17 @@
 [project]
 name = "global-macro-data"
-version = "0.3.1"
+version = "1.0.0"
 description = "Global Macro Database by Karsten Müller, Chenzi Xu, Mohamed Lehbib and Ziliang Chen (2025)"
 readme = "README.md"
 authors = [
     { name = "Yangbo Wang", email = "wangyangbo@ruc.edu.cn" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.8"
 license = { text = "MIT" }
 dependencies = [
-    "pandas>=1.5.3",
-    "requests>=2.31.0"
+    "pandas>=1.0.5",
+    "requests>=2.20",
+    "importlib_resources; python_version < \"3.9\""
 ]
 
 classifiers = [
@@ -20,7 +21,7 @@ classifiers = [
 ]
 
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]

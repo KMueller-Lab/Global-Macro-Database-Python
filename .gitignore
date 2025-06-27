@@ -23,8 +23,11 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Keep egg-info for package metadata
-!global_macro_data.egg-info/
+# Remove egg-info
+global_macro_data.egg-info/
 
 # Test file
 test.py
+
+# Testing: .tox
+.tox/

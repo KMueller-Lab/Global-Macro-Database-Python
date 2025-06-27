@@ -1,8 +1,12 @@
 # Standard library
 import io
-from typing import Optional, Union, List
+from typing import Optional, Union, List, Dict
+try:
+    import importlib.resources as importlib_resources
+except ImportError:
+    import importlib_resources  # Backport for Python <3.9
+
 import json
-import importlib.resources
 
 # Third-party
 import pandas as pd
@@ -71,7 +75,7 @@ def get_current_version() -> str:
 
 def list_variables(
     as_dict: bool = False
-) -> Union[pd.DataFrame, dict[str, str]]:
+) -> Union[pd.DataFrame, Dict[str, str]]:
     """Return available variable codes and their descriptions."""
     global VALID_VARIABLES
     descriptions = {
@@ -136,11 +140,13 @@ def list_variables(
 
 def list_countries(
     as_dict: bool = False
-) -> Union[pd.DataFrame, dict[str, str]]:
+) -> Union[pd.DataFrame, Dict[str, str]]:
     """Return countries and their ISO3 codes."""
     try:
-        with importlib.resources.files('global_macro_data')\
-                .joinpath('isomapping.json').open('r', encoding='utf-8') as f:
+        with importlib_resources.open_text('global_macro_data',
+                                           'isomapping.json',
+                                           encoding='utf-8') as f:
+
             data = json.load(f)
 
         if as_dict:
