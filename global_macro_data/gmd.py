@@ -1,309 +1,741 @@
-import os
-import requests
-import pandas as pd
-import io
-from typing import Optional, Union, List
-import sys
 
-# Valid variables list
+from __future__ import annotations
+
+import io
+import re
+from functools import lru_cache
+from pathlib import Path
+from typing import List, Optional, Sequence, Union
+
+import pandas as pd
+import requests
+
+PACKAGE_VERSION = "2.0.0"
+
+_DATA_BASES = (
+    "https://gmd-releases.s3.ap-southeast-2.amazonaws.com/data",
+    "https://raw.githubusercontent.com/KMueller-Lab/Global-Macro-Database/refs/heads/main/data",
+)
+_TIMEOUT_SECONDS = 60
+_CACHE_DIR = Path.home() / ".global_macro_data"
+_ID_COLS = ("ISO3", "year", "id", "countryname")
+
+_APA_GMD = (
+    "Müller, K., Xu, C., Lehbib, M., & Chen, Z. (2025). "
+    "The Global Macro Database: A New International Macroeconomic Dataset "
+    "(NBER Working Paper No. 33714)."
+)
+_APA_PACKAGE = (
+    "Lehbib, M. & Müller, K. (2025). gmd: The Easy Way to Access the "
+    "World's Most Comprehensive Macroeconomic Database. Working Paper."
+)
+
+_ISSUES_URL = "https://github.com/KMueller-Lab/Global-Macro-Database"
+_UPGRADE_MSG = "There is a new version of the package. Run: pip install --upgrade global-macro-data"
+_NETWORK_HINT = 'If you have active internet access, specify the option: gmd(network="yes")'
+_VARS_HINTS = (
+    'To print the list of variables: gmd(vars="list")',
+    'To load the list of variables: gmd(vars="load")',
+)
+_COUNTRY_HINTS = (
+    'To print the list of countries: gmd(country="list")',
+    'To load the list of countries: gmd(country="load")',
+)
+
 VALID_VARIABLES = [
-    # GDP and related
-    "nGDP", "rGDP", "rGDP_USD", "rGDP_pc", "deflator",
-    # Consumption
-    "cons", "cons_GDP", "rcons",
-    # Investment
-    "inv", "inv_GDP", "finv", "finv_GDP",
-    # Trade
-    "exports", "exports_GDP", "imports", "imports_GDP",
-    # Current account and exchange rates
-    "CA", "CA_GDP", "USDfx", "REER",
-    # Government
-    "govexp", "govexp_GDP", "govrev", "govrev_GDP",
-    "govtax", "govtax_GDP", "govdef", "govdef_GDP",
-    "govdebt", "govdebt_GDP",
-    # Prices and inflation
-    "HPI", "CPI", "infl",
-    # Demographics and labor
-    "pop", "unemp",
-    # Interest rates
-    "strate", "ltrate", "cbrate",
-    # Money supply
-    "M0", "M1", "M2", "M3", "M4",
-    # Crises
-    "CurrencyCrisis", "BankingCrisis", "SovDebtCrisis"
+    "CA","CA_USD","CA_GDP","cbrate","cons_USD","cons","cons_GDP","CPI","deflator",
+    "exports","exports_GDP","exports_USD","finv_USD","finv","finv_GDP","HPI","imports_GDP",
+    "imports","imports_USD","infl","inv_GDP","inv","inv_USD","ltrate","M0","M1","M2",
+    "M3","M4","nGDP_USD","nGDP","pop","REER","rGDP","rGDP_pc_USD","rGDP_pc","rGDP_USD",
+    "strate","unemp","USDfx","BankingCrisis","SovDebtCrisis","CurrencyCrisis","cgovdebt",
+    "cgovdebt_GDP","cgovdef","cgovdef_GDP","cgovexp","cgovexp_GDP","cgovrev","cgovrev_GDP",
+    "cgovtax","cgovtax_GDP","gen_govdebt","gen_govdebt_GDP","gen_govdef","gen_govdef_GDP",
+    "gen_govexp","gen_govexp_GDP","gen_govrev","gen_govrev_GDP","gen_govtax","gen_govtax_GDP",
+    "govrev_GDP","govexp_GDP","govtax_GDP","govdef_GDP","govdebt_GDP","govrev","govexp",
+    "govtax","govdef","govdebt",
 ]
 
-def get_available_versions() -> List[str]:
-    """Get list of available versions from GitHub"""
-    try:
-        versions_url = (
-            "https://raw.githubusercontent.com/KMueller-Lab/"
-            "Global-Macro-Database/refs/heads/main/data/helpers/versions.csv"
+
+class GMDCommandError(RuntimeError):
+    def __init__(self, message: str, code: int = 498, data: Optional[pd.DataFrame] = None):
+        super().__init__(message)
+        self.code = code
+        self.data = data
+
+
+def _emit(*lines: str) -> None:
+    for line in lines:
+        print(line)
+
+
+def _fail(*lines: str, code: int = 498) -> None:
+    if lines:
+        _emit(*lines)
+        raise GMDCommandError(lines[-1], code=code)
+    raise GMDCommandError("gmd failed", code=code)
+
+
+def _fail_with_issue(resource: str, code: int = 498) -> None:
+    _fail(f"Unable to access {resource}. Please raise an issue at {_ISSUES_URL}", code=code)
+
+
+def _fail_needs_internet(action: str) -> None:
+    _fail(f"You need access to the internet in order to {action}", _NETWORK_HINT, code=498)
+
+
+def _sort_versions_df(df: pd.DataFrame) -> pd.DataFrame:
+    parts = df["versions"].astype(str).str.extract(r"(?P<year>\d{4})_(?P<month>\d{2})")
+    df = df.assign(
+        _year=pd.to_numeric(parts["year"], errors="coerce"),
+        _month=pd.to_numeric(parts["month"], errors="coerce"),
+    ).sort_values(["_year", "_month"], ascending=[False, False])
+    return df.drop(columns=["_year", "_month"]).reset_index(drop=True)
+
+
+def _fetch_from(relative_path: str, bases: Sequence[str]) -> requests.Response:
+    errors: List[str] = []
+    for base in bases:
+        url = f"{base}/{relative_path}"
+        try:
+            response = requests.get(url, timeout=_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            errors.append(f"{url}: {exc}")
+    raise RuntimeError(f"Unable to load '{relative_path}'. {'; '.join(errors)}")
+
+
+def _fetch_first(relative_path: str) -> requests.Response:
+    return _fetch_from(relative_path, _DATA_BASES)
+
+
+def _fetch_primary(relative_path: str) -> requests.Response:
+    return _fetch_from(relative_path, (_DATA_BASES[0],))
+
+
+def _fetch_secondary(relative_path: str) -> requests.Response:
+    return _fetch_from(relative_path, (_DATA_BASES[1],))
+
+
+def _read_csv(resp: requests.Response, **kwargs) -> pd.DataFrame:
+    return pd.read_csv(io.StringIO(resp.text), **kwargs)
+
+
+def _read_dta(resp: requests.Response) -> pd.DataFrame:
+    return pd.read_stata(io.BytesIO(resp.content), convert_categoricals=False)
+
+
+def _read_csv_primary(relative_path: str, **kwargs) -> pd.DataFrame:
+    return _read_csv(_fetch_primary(relative_path), **kwargs)
+
+
+def _read_dta_primary(relative_path: str) -> pd.DataFrame:
+    return _read_dta(_fetch_primary(relative_path))
+
+
+def _tokens(value: Union[str, Sequence[str], None]) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        bits = value.replace(",", " ").split()
+        return [bit.strip() for bit in bits if bit.strip()]
+    out: List[str] = []
+    for item in value:
+        if isinstance(item, str):
+            out.extend(_tokens(item))
+        else:
+            out.append(str(item))
+    return out
+
+
+def _is_fast_yes(fast: Optional[Union[str, bool]]) -> bool:
+    if isinstance(fast, bool):
+        return fast
+    if isinstance(fast, str):
+        return fast.strip().lower() == "yes"
+    return False
+
+
+def _ensure_cache_dir() -> None:
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _cache_versions() -> List[str]:
+    if not _CACHE_DIR.exists():
+        return []
+    out: List[str] = []
+    pattern = re.compile(r"^GMD_(\d{4}_\d{2})\.dta$")
+    for path in _CACHE_DIR.glob("GMD_*.dta"):
+        match = pattern.match(path.name)
+        if match:
+            out.append(match.group(1))
+    return sorted(set(out), reverse=True)
+
+
+def _default_local_gmd_path() -> Optional[Path]:
+    dta = _CACHE_DIR / "GMD.dta"
+    if dta.exists():
+        return dta
+    return None
+
+
+def _read_local_df(path: Path) -> pd.DataFrame:
+    if path.suffix.lower() == ".dta":
+        return pd.read_stata(path, convert_categoricals=False)
+    return pd.read_csv(path)
+
+@lru_cache(maxsize=1)
+def _versions_df() -> pd.DataFrame:
+    df = _read_csv_primary("helpers/versions.csv")
+    if "versions" not in df.columns:
+        raise RuntimeError("Malformed versions.csv")
+    return _sort_versions_df(df)
+
+
+@lru_cache(maxsize=1)
+def _varlist_df() -> pd.DataFrame:
+    return _read_csv_primary("helpers/varlist.csv")
+
+
+@lru_cache(maxsize=1)
+def _source_list_df() -> pd.DataFrame:
+    return _read_csv_primary("helpers/source_list.csv")
+
+
+@lru_cache(maxsize=1)
+def _bib_df() -> pd.DataFrame:
+    return _read_csv_primary("helpers/bib_dataframe.csv")
+
+
+@lru_cache(maxsize=1)
+def _country_df() -> pd.DataFrame:
+    return _read_dta_primary("helpers/countrylist.dta")
+
+
+def _format_bibtex_for_print(entry: str) -> str:
+    text = re.sub(r",\s*([a-zA-Z0-9_]+\s*=)", r",\n  \1", entry.strip())
+    return re.sub(r"\}\s*$", "\n}", text)
+
+
+def _print_var_table(df: pd.DataFrame) -> None:
+    table = df
+    if "variable" not in table.columns and "variables" in table.columns:
+        table = table.rename(columns={"variables": "variable"})  # rename returns a new DataFrame
+    if not {"variable", "definition", "units"}.issubset(table.columns):
+        _fail_with_issue("variable list")
+
+    varlength = int(table["variable"].astype(str).str.len().max()) + 2
+    deflength = int(table["definition"].astype(str).str.len().max()) + varlength + 2
+
+    _emit("", "Available variables:", "")
+    _emit("-" * 90)
+    _emit(
+        f"Variable{' ' * max(varlength - len('Variable'), 1)}"
+        f"Definition{' ' * max(deflength - varlength - len('Definition'), 1)}Units"
+    )
+    _emit("-" * 90)
+    for _, row in table.iterrows():
+        vname = str(row["variable"])
+        vdesc = str(row["definition"])
+        vunits = str(row["units"])
+        left = vname + (" " * max(varlength - len(vname), 1))
+        mid = " " * max(deflength - len(left) - len(vdesc), 1)
+        _emit(f"{left}{vdesc}{mid}{vunits}")
+    _emit("-" * 90)
+
+
+def _print_country_table(df: pd.DataFrame) -> None:
+    if not {"countryname", "ISO3"}.issubset(df.columns):
+        _fail_with_issue("country list")
+    _emit("", "Available countries:", "")
+    _emit("-" * 90)
+    _emit("ISO3 code  Country name")
+    _emit("-" * 90)
+    for _, row in df[["ISO3", "countryname"]].iterrows():
+        _emit(f"{str(row['ISO3']):<10}{row['countryname']}")
+    _emit("-" * 90)
+
+
+def _summary(
+    df: pd.DataFrame,
+    anything: str,
+    country: str,
+    selected_version: str,
+    version_opt: Optional[str],
+    raw: bool,
+    sources: Optional[str],
+    fast: Optional[Union[str, bool]],
+    saved_gmd: bool,
+) -> None:
+    n_vars = len(df.columns)
+    for ident in _ID_COLS:
+        if ident in df.columns:
+            n_vars -= 1
+    if n_vars <= 0:
+        _fail(f"The database has no data on {anything} for {country}", code=498)
+    if len(df) <= 0:
+        return
+
+    _emit("Global Macro Database by Müller, Xu, Lehbib, and Chen (2025)")
+    _emit("Website: https://www.globalmacrodata.com")
+    _emit("")
+    _emit("When using these data, please cite:")
+    _emit('For BibTeX: gmd(cite="GMD")  |  For APA: gmd(print_option="GMD")')
+    _emit("")
+    _emit("When using the gmd command, please further cite:")
+    _emit('For BibTeX: gmd(cite="lehbib2025gmd")  |  For APA: gmd(print_option="Stata")')
+    _emit("")
+
+    if (fast is None or str(fast).strip() == "") and (not saved_gmd) and (not raw):
+        _emit(
+            f"To save the data locally for faster reloading, use: "
+            f'gmd(version="{selected_version}", fast="yes")'
         )
-        response = requests.get(versions_url)
-        if response.status_code != 200:
-            raise Exception("Could not fetch versions")
-        
-        versions_df = pd.read_csv(io.StringIO(response.text))
-        versions = versions_df['versions'].tolist()
-        return sorted(versions, reverse=True)
-    except Exception as e:
-        raise Exception(f"Error fetching versions: {str(e)}")
+
+    if raw or (sources is not None and str(sources) != ""):
+        _emit(f"Final dataset: {len(df)} observations of {n_vars} variables")
+    else:
+        if n_vars > 1:
+            _emit(f"Final dataset: {len(df)} observations for {n_vars} variables")
+        else:
+            _emit(f"Final dataset: {len(df)} observations for {n_vars} variable")
+
+    if version_opt is not None and str(version_opt) != "":
+        _emit(f"Version: {version_opt}")
+    else:
+        _emit(f"Version: {selected_version}")
+
+
+def _normalize_source_name(source: str) -> str:
+    source = source.strip()
+    if len(source) == 7 and source.startswith("CS"):
+        # Convert CS-prefixed 7-char alias e.g. "CS1_ARG" → "ARG_1"
+        return f"{source[-3:]}_{source[2]}"
+    return source
+
+
+def _strip_source_prefix_cols(df: pd.DataFrame, source: str) -> List[str]:
+    pref = f"{source}_"
+    out: List[str] = []
+    for col in df.columns:
+        if col in ("ISO3", "year"):
+            continue
+        if col.startswith(pref):
+            out.append(col[len(pref):])
+        else:
+            out.append(col)
+    return out
+
+
+def get_available_versions() -> List[str]:
+    try:
+        return _versions_df()["versions"].astype(str).tolist()
+    except RuntimeError:
+        versions = _cache_versions()
+        if versions:
+            return versions
+        if _default_local_gmd_path() is not None:
+            return ["local"]
+        raise
+
 
 def get_current_version() -> str:
-    """Get the current version of the dataset"""
-    versions = get_available_versions()
-    return versions[0] if versions else None
+    return get_available_versions()[0]
+
 
 def list_variables() -> None:
-    """Display list of available variables and their descriptions"""
-    print("\nAvailable variables:\n")
-    print("-" * 90)
-    print(f"{'Variable':<17} Description")
-    print("-" * 90)
-    
-    descriptions = {
-        "nGDP": "Nominal Gross Domestic Product",
-        "rGDP": "Real Gross Domestic Product, in 2010 prices",
-        "rGDP_pc": "Real Gross Domestic Product per Capita",
-        "rGDP_USD": "Real Gross Domestic Product in USD",
-        "deflator": "GDP deflator",
-        "cons": "Total Consumption",
-        "rcons": "Real Total Consumption",
-        "cons_GDP": "Total Consumption as % of GDP",
-        "inv": "Total Investment",
-        "inv_GDP": "Total Investment as % of GDP",
-        "finv": "Fixed Investment",
-        "finv_GDP": "Fixed Investment as % of GDP",
-        "exports": "Total Exports",
-        "exports_GDP": "Total Exports as % of GDP",
-        "imports": "Total Imports",
-        "imports_GDP": "Total Imports as % of GDP",
-        "CA": "Current Account Balance",
-        "CA_GDP": "Current Account Balance as % of GDP",
-        "USDfx": "Exchange Rate against USD",
-        "REER": "Real Effective Exchange Rate, 2010 = 100",
-        "govexp": "Government Expenditure",
-        "govexp_GDP": "Government Expenditure as % of GDP",
-        "govrev": "Government Revenue",
-        "govrev_GDP": "Government Revenue as % of GDP",
-        "govtax": "Government Tax Revenue",
-        "govtax_GDP": "Government Tax Revenue as % of GDP",
-        "govdef": "Government Deficit",
-        "govdef_GDP": "Government Deficit as % of GDP",
-        "govdebt": "Government Debt",
-        "govdebt_GDP": "Government Debt as % of GDP",
-        "HPI": "House Price Index",
-        "CPI": "Consumer Price Index, 2010 = 100",
-        "infl": "Inflation Rate",
-        "pop": "Population",
-        "unemp": "Unemployment Rate",
-        "strate": "Short-term Interest Rate",
-        "ltrate": "Long-term Interest Rate",
-        "cbrate": "Central Bank Policy Rate",
-        "M0": "M0 Money Supply",
-        "M1": "M1 Money Supply",
-        "M2": "M2 Money Supply",
-        "M3": "M3 Money Supply",
-        "M4": "M4 Money Supply",
-        "SovDebtCrisis": "Sovereign Debt Crisis",
-        "CurrencyCrisis": "Currency Crisis",
-        "BankingCrisis": "Banking Crisis"
-    }
-    
-    for var in sorted(VALID_VARIABLES):
-        print(f"{var:<17} {descriptions.get(var, '')}")
-    
-    print("-" * 90)
+    _print_var_table(_varlist_df())
+
 
 def list_countries() -> None:
-    """Display list of available countries and their ISO codes"""
-    try:
-        # Load isomapping from the package directory
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        isomapping_path = os.path.join(
-            os.path.dirname(script_dir), 'isomapping.csv'
-        )
-        isomapping = pd.read_csv(isomapping_path)
-        
-        print("\nCountry and territories" + " " * 27 + "Code")
-        print("-" * 60)
-        
-        for _, row in isomapping.iterrows():
-            print(f"{row['countryname']:<50} {row['ISO3']}")
-        
-        print("-" * 60)
-    except Exception as e:
-        raise Exception(f"Error loading country list: {str(e)}")
+    _print_country_table(_country_df())
 
 def gmd(
-    variables: Optional[Union[str, List[str]]] = None,
-    country: Optional[Union[str, List[str]]] = None,
+    variables: Optional[Union[str, Sequence[str]]] = None,
+    country: Optional[Union[str, Sequence[str]]] = None,
     version: Optional[str] = None,
     raw: bool = False,
     iso: bool = False,
-    vars: bool = False
+    vars: Optional[Union[bool, str]] = None,
+    sources: Optional[str] = None,
+    cite: Optional[str] = None,
+    print_option: Optional[str] = None,
+    network: Optional[str] = None,
+    fast: Optional[Union[str, bool]] = None,
+    **kwargs,
 ) -> Optional[pd.DataFrame]:
-    """
-    Download and filter Global Macro Data.
-    
-    Parameters:
-    - variables (str or list): Variable code(s) to include
-        (e.g., "rGDP" or ["rGDP", "unemp"])
-    - country (str or list): ISO3 country code(s)
-        (e.g., "SGP" or ["MRT", "SGP"])
-    - version (str): Dataset version in format 'YYYY_MM'
-        (e.g., '2025_01')
-    - raw (bool): If True, download raw data for a single variable
-    - iso (bool): If True, display list of available countries
-    - vars (bool): If True, display list of available variables
-    
-    Returns:
-    - pd.DataFrame: The requested data, or None if displaying lists
-    """
-    base_url = "https://www.globalmacrodata.com"
-    
-    # Handle special display options
+    if "print" in kwargs:
+        if print_option is not None:
+            raise TypeError("Specify either print_option or print, not both.")
+        print_option = kwargs.pop("print")
+    if kwargs:
+        raise TypeError(f"Unexpected keyword argument(s): {', '.join(kwargs.keys())}")
+
     if iso:
-        list_countries()
-        return None
-    
-    if vars:
-        list_variables()
-        return None
-    
-    # Validate variables before proceeding
-    if variables:
-        if isinstance(variables, str):
-            variables = [variables]
-        
-        # Validate variables
-        invalid_vars = [
-            var for var in variables if var not in VALID_VARIABLES
-        ]
-        if invalid_vars:
-            print("Global Macro Database by Müller et. al (2025)")
-            print("Website: https://www.globalmacrodata.com\n")
-            print(f"Invalid variable code: {invalid_vars[0]}")
-            print(
-                "\nTo see the list of valid variable codes, "
-                "use: gmd(vars=True)"
-            )
-            sys.exit(1)
-    
-    # Get current version if not specified
-    if version is None:
-        version = get_current_version()
-    elif version.lower() == "current":
-        version = get_current_version()
+        country = "list"
+    if vars is True:
+        vars = "list"
+    elif vars is False:
+        vars = None
+
+    anything_tokens = _tokens(variables)
+    anything = " ".join(anything_tokens)
+    word_count = len(anything_tokens)
+
+    if isinstance(country, str):
+        country_arg = country
+    elif country is None:
+        country_arg = ""
     else:
-        # Check if version exists
-        available_versions = get_available_versions()
-        if version not in available_versions:
-            print("Global Macro Database by Müller et. al (2025)")
-            print("Website: https://www.globalmacrodata.com\n")
-            print(f"Error: {version} is not valid")
-            print(f"Available versions are: {', '.join(available_versions)}")
-            print(f"The current version is: {get_current_version()}")
-            sys.exit(1)
-    
-    # Handle raw data option
-    if raw:
-        if (not variables or 
-            (isinstance(variables, list) and len(variables) > 1)):
-            print("Global Macro Database by Müller et. al (2025)")
-            print("Website: https://www.globalmacrodata.com\n")
-            print("Warning: raw requires specifying exactly one variable")
-            print("Note: Raw data is only accessed variable-wise using: gmd [variable], raw")
-            print("To download the full data documentation: https://www.globalmacrodata.com/GMD.xlsx")
-            sys.exit(1)
-        
-        if isinstance(variables, list):
-            variables = variables[0]
-        
-        data_url = f"{base_url}/{variables}_{version}.csv"
-        print(f"Importing raw data for variable: {variables}")
-    else:
-        # Handle single variable case for efficiency
-        if isinstance(variables, list) and len(variables) == 1:
-            variables = variables[0]
-            data_url = f"{base_url}/{variables}_{version}.csv"
-            print(f"Importing data for variable: {variables}")
-        else:
-            data_url = f"{base_url}/GMD_{version}.csv"
-    
-    # Download data
+        country_arg = " ".join(_tokens(country))
+
+    if print_option is not None:
+        option = str(print_option).strip().lower()
+        if option == "gmd":
+            _emit(_APA_GMD)
+            return None
+        if option == "stata":
+            _emit(_APA_PACKAGE)
+            return None
+        _fail("Invalid option for print(). valid arguments are 'GMD' or 'Stata'.", code=198)
+
+    selected_version = ""
+    available_versions: List[str] = []
+    has_internet = True
+    gmd_local_path: Optional[Path] = None
+    saved_gmd = False
+
     try:
-        response = requests.get(data_url)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        print("Global Macro Database by Müller et. al (2025)")
-        print("Website: https://www.globalmacrodata.com\n")
-        print(f"Error downloading data: {str(e)}")
-        sys.exit(1)
-    
-    # Read the data
-    df = pd.read_csv(io.StringIO(response.text))
-    
-    # Filter by country if specified
-    if country:
-        if isinstance(country, str):
-            country = [country]
-        
-        country = [c.upper() for c in country]
-        
-        # Validate country codes
-        invalid_countries = [
-            c for c in country if c not in df["ISO3"].unique()
-        ]
-        if invalid_countries:
-            print("Global Macro Database by Müller et. al (2025)")
-            print("Website: https://www.globalmacrodata.com\n")
-            print(f"Error: Invalid country code '{invalid_countries[0]}'")
-            print("\nTo see the list of valid country codes, use: gmd(iso=True)")
-            sys.exit(1)
-        
-        df = df[df["ISO3"].isin(country)]
-        print(f"Filtered data for countries: {', '.join(country)}")
-    
-    # Filter by variables if specified
-    if variables and not raw:
-        if isinstance(variables, str):
-            variables = [variables]
-        
-        # Always include identifier columns
-        required_cols = ["ISO3", "countryname", "year"]
-        all_cols = required_cols + [
-            var for var in variables if var not in required_cols
-        ]
-        
-        # Filter to only include requested variables
-        existing_vars = [var for var in all_cols if var in df.columns]
-        df = df[existing_vars]
-    
-    # Clean up missing variables
-    df = df.dropna(axis=1, how='all')
-    
-    # Display dataset information
-    if len(df) == 0:
-        print(f"The database has no data on {variables} for {country}")
+        versions_df = _versions_df()
+        selected_version = str(versions_df.loc[0, "versions"])
+        available_versions = sorted(set(versions_df["versions"].astype(str).tolist()))
+
+        if "version_package" in versions_df.columns:
+            package_remote = str(versions_df.loc[0, "version_package"])
+            if package_remote != PACKAGE_VERSION:
+                _emit(_UPGRADE_MSG)
+
+        if version == "list":
+            for ver in available_versions:
+                _emit(ver)
+            return None
+
+        if version is not None and str(version) != "":
+            if len(_tokens(str(version))) != 1:
+                _emit(
+                    f"Version must either be one specific version ({selected_version}) or current."
+                )
+                return None
+            requested = str(version)
+            if requested in available_versions:
+                selected_version = requested
+            elif requested == "current":
+                _emit(f"Current version: {selected_version}")
+            else:
+                _fail(
+                    f"Error: Version {requested} does not exist",
+                    f"Available versions: {' '.join(available_versions)}",
+                    code=498,
+                )
+
+    except RuntimeError as exc:
+        if isinstance(exc, GMDCommandError):
+            raise
+        try:
+            versions_gh = _read_csv(_fetch_secondary("helpers/versions.csv"))
+            if "versions" in versions_gh.columns and "version_package" in versions_gh.columns:
+                versions_gh = _sort_versions_df(versions_gh)
+                package_remote = str(versions_gh.iloc[0]["version_package"])
+                if package_remote != PACKAGE_VERSION:
+                    _emit(_UPGRADE_MSG)
+                    _emit(f"Please raise an issue if the update does not work at {_ISSUES_URL}")
+        except RuntimeError:
+            pass
+
+        has_internet = network is not None and str(network) != ""
+        _emit("Error: Unable to access version information. Check internet connection.")
+        _emit("Loading local version")
+
+        local_default = _default_local_gmd_path()
+        if local_default is None:
+            _fail("Local version not found", code=498)
+
+        gmd_local_path = local_default
+        saved_gmd = True
+        selected_version = ""
+
+    if not has_internet:
+        if sources in ("load", "list"):
+            _fail_needs_internet("fetch the sources list")
+        elif sources is not None and str(sources) != "":
+            _fail_needs_internet(f"fetch the {sources} data")
+
+        if raw:
+            _fail_needs_internet("fetch the raw data")
+
+        if cite == "load":
+            _fail_needs_internet("load the sources to cite")
+        elif cite is not None and str(cite) != "":
+            _fail_needs_internet(f"cite {cite}")
+
+    if cite == "load":
+        try:
+            return _bib_df()
+        except RuntimeError:
+            _fail_with_issue("the list of sources to cite")
+
+    if cite is not None and str(cite) != "":
+        cite_tokens = _tokens(str(cite))
+        if len(cite_tokens) != 1:
+            _fail("Only one citation can be retrieved at a time", code=498)
+        key = cite_tokens[0]
+
+        bib = _bib_df()
+        if "source_name" not in bib.columns:
+            _fail("source_name not found", code=111)
+        if "citation" not in bib.columns:
+            _fail("citation not found", code=111)
+        mask = bib["source_name"].astype(str).str.lower() == key.lower()
+        if not mask.any():
+            _fail(
+                f"Source '{key}' does not exist.",
+                'To load the list of sources to cite: gmd(cite="load")',
+                code=498,
+            )
+        _emit(_format_bibtex_for_print(str(bib.loc[mask, "citation"].iloc[0])))
         return None
-    
+
+    if sources is not None and str(sources) != "" and raw:
+        _emit("Note: raw option is specified, but this is implicit when using the sources option.")
+
+    if sources in ("load", "list"):
+        try:
+            source_df = _source_list_df()
+        except RuntimeError:
+            _fail_with_issue("source list")
+        if sources == "load":
+            _emit("Imported the list of sources.")
+            return source_df
+        for src in sorted(set(source_df["source_name"].astype(str).tolist())):
+            _emit(src)
+        return None
+
+    if sources is not None and str(sources) != "":
+
+        src_name = str(sources).strip()
+        if len(src_name) == 7 and src_name.startswith("CS"):
+            src_name = _normalize_source_name(src_name)
+
+        src_tokens = _tokens(src_name)
+        if len(src_tokens) > 1:
+            _fail("Warning: Please specify exactly one source.", code=498)
+        src_name = src_tokens[0]
+
+        try:
+            src_df = _read_dta_primary(f"clean/combined/{src_name}.dta")
+        except RuntimeError:
+            # First load failed — try correcting the source name and retry
+            try:
+                source_list = _source_list_df()
+            except RuntimeError:
+                _emit(f"Unable to access source list. Please raise an issue at {_ISSUES_URL}")
+                src_df = pd.DataFrame()
+                return src_df
+            mask = source_list["source_name"].astype(str).str.lower() == src_name.lower()
+            if not mask.any():
+                _fail(
+                    "Invalid source name",
+                    'To load the list of sources: gmd(sources="load")',
+                    code=498,
+                )
+            src_name = str(source_list.loc[mask, "source_name"].iloc[0])
+            try:
+                src_df = _read_dta_primary(f"clean/combined/{src_name}.dta")
+            except RuntimeError:
+                _fail(
+                    f"Unable to load data for source '{src_name}'.",
+                    "Please check your internet connection or report this issue.",
+                    code=498,
+                )
+
+        if anything != "":
+            src_col = f"{src_name}_{anything}"
+            if src_col in src_df.columns:
+                keep_cols: List[str] = [col for col in ["ISO3", "year", src_col] if col in src_df.columns]
+                if "countryname" in src_df.columns:
+                    keep_cols.append("countryname")
+                if "id" in src_df.columns:
+                    keep_cols.append("id")
+                out = src_df.loc[:, keep_cols]
+
+                if country_arg != "":
+                    target = country_arg.upper()
+                    out = out.loc[out["ISO3"].astype(str).str.upper() == target]
+                return out
+
+            avail = _strip_source_prefix_cols(src_df, src_name)
+            _emit(f"This source doesn't have data on {anything}. It has data on {' '.join(avail)}.")
+            return None
+
+        return src_df
+
+    if vars == "load":
+        try:
+            return _varlist_df().copy()
+        except RuntimeError:
+            _fail_with_issue("variable list")
+
+    if vars == "list":
+        try:
+            var_df = _varlist_df()
+        except RuntimeError:
+            _fail_with_issue("variable list")
+        _print_var_table(var_df)
+        return None
+
+    df: Optional[pd.DataFrame] = None
     if raw:
-        n_sources = len(df.columns) - 8  # Subtract identifier columns
-        print(f"Final dataset: {len(df)} observations of {n_sources} sources")
-    else:
-        print(
-            f"Final dataset: {len(df)} observations of "
-            f"{len(df.columns)} variables"
+        if word_count != 1:
+            _fail("Warning: Please specify exactly one variable.", code=498)
+        try:
+            df = _read_csv_primary(f"distribute/{anything}_{selected_version}.csv")
+        except RuntimeError:
+            try:
+                var_df = _varlist_df()
+                # Check if the variable is listed in the varlist values
+                var_col = "variable" if "variable" in var_df.columns else "variables"
+                is_valid = var_col in var_df.columns and anything in set(var_df[var_col].astype(str))
+            except RuntimeError:
+                is_valid = False
+            if not is_valid:
+                _fail("Specified variable is not valid.", code=498)
+            _fail("Variable does not have raw data.", code=498)
+        _emit(f"Loaded raw data on {anything}")
+
+    if isinstance(country, str) and country.lower() in {"load", "list"}:
+        mode = country.lower()
+        _ensure_cache_dir()
+        local_country = _CACHE_DIR / "countrylist.dta"
+        if local_country.exists():
+            cty_df = pd.read_stata(local_country, convert_categoricals=False)
+        else:
+            try:
+                cty_df = _country_df().copy()
+            except RuntimeError:
+                _fail_with_issue("country list")
+            if _is_fast_yes(fast):
+                _emit("Saving countrylist dataframe locally")
+                cty_df.to_stata(local_country, write_index=False)
+
+        if mode == "load":
+            return cty_df
+        _print_country_table(cty_df)
+        return None
+
+    check_id = anything.lower()
+    if check_id in {c.lower() for c in _ID_COLS}:
+        _fail(
+            f"{anything} is an identifying variable loaded in the dataset, specify common variables",
+            *_VARS_HINTS,
+            code=498,
         )
-    
-    print(f"Version: {version}")
-    
-    # Sort and order columns
-    df = df.sort_values(['countryname', 'year'])
-    id_cols = ['ISO3', 'countryname', 'year']
-    other_cols = [col for col in df.columns if col not in id_cols]
-    df = df[id_cols + other_cols]
-    
+
+    if not raw:
+        _ensure_cache_dir()
+        if gmd_local_path is None:
+            local_version = _CACHE_DIR / f"GMD_{selected_version}.dta"
+            if local_version.exists():
+                saved_gmd = True
+                df = pd.read_stata(local_version, convert_categoricals=False)
+            elif _is_fast_yes(fast):
+                try:
+                    df = _read_dta_primary(f"distribute/GMD_{selected_version}.dta")
+                except RuntimeError:
+                    _fail_with_issue("the data")
+                df.to_stata(local_version, write_index=False)
+                df.to_stata(_CACHE_DIR / "GMD.dta", write_index=False)
+                _emit(f"GMD dataset loaded and saved locally in {_CACHE_DIR}.")
+            else:
+                try:
+                    df = _read_dta_primary(f"distribute/GMD_{selected_version}.dta")
+                except RuntimeError:
+                    _fail_with_issue("the data")
+        else:
+            df = _read_local_df(gmd_local_path)
+
+    if df is None:
+        raise GMDCommandError("No data loaded", code=498)
+
+    if anything != "" and not raw:
+        invalid_vars = [var for var in anything_tokens if var not in df.columns]
+        if invalid_vars:
+            if len(invalid_vars) == 1:
+                _emit(f"{invalid_vars[0]} is not a valid variable code")
+            else:
+                _emit(f"{' '.join(invalid_vars)} are not valid variable codes")
+            _fail(*_VARS_HINTS, code=498)
+
+        keep_cols = list(dict.fromkeys(col for col in list(_ID_COLS) + anything_tokens if col in df.columns))
+        df = df.loc[:, keep_cols].copy()
+        valid_count = df[anything_tokens].notna().sum(axis=1)
+        if {"ISO3", "year"}.issubset(df.columns):
+            ordered = df.assign(_valid_count=valid_count).sort_values(["ISO3", "year"])
+            mask = ordered.groupby("ISO3", sort=False)["_valid_count"].cumsum() > 0
+            df = ordered.loc[mask].drop(columns=["_valid_count"])
+
+    if country_arg != "":
+        c_tokens = _tokens(country_arg.upper())
+        if len(c_tokens) == 1:
+            iso_code = c_tokens[0]
+            iso_series = df["ISO3"].astype(str).str.upper() if "ISO3" in df.columns else pd.Series(dtype=str)
+            if iso_series.empty or not (iso_series == iso_code).any():
+                _fail(
+                    "Country code is invalid or no data for this country in source.",
+                    *_COUNTRY_HINTS,
+                    code=498,
+                )
+            df = df.loc[iso_series == iso_code]
+        elif len(c_tokens) > 1:
+            if "ISO3" not in df.columns:
+                _fail(
+                    "Country code is invalid or no data for this country in source.",
+                    *_COUNTRY_HINTS,
+                    code=498,
+                )
+            iso_series = df["ISO3"].astype(str).str.upper()
+            keep_mask = pd.Series(False, index=df.index)
+            invalid: List[str] = []
+            for iso_code in c_tokens:
+                one = iso_series == iso_code
+                if one.any():
+                    keep_mask = keep_mask | one
+                else:
+                    invalid.append(iso_code)
+
+            if invalid:
+                inv = " ".join(invalid)
+                if len(invalid) == 1:
+                    _emit(f"{inv} is not a valid ISO3 code")
+                else:
+                    _emit(f"{inv} are not valid ISO3 codes")
+                _emit(*_COUNTRY_HINTS)
+                df = df.loc[keep_mask]
+                raise GMDCommandError("Invalid ISO3 code", code=498, data=df.dropna(axis=1, how="all"))
+
+            df = df.loc[keep_mask]
+
+    df = df.dropna(axis=1, how="all")
+
+    _summary(
+        df=df,
+        anything=anything,
+        country=country_arg,
+        selected_version=selected_version,
+        version_opt=version,
+        raw=raw,
+        sources=sources,
+        fast=fast,
+        saved_gmd=saved_gmd,
+    )
+
     return df
