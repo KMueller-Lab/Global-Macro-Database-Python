@@ -1,0 +1,4 @@
+include LICENSE
+include tests/conftest.py
+recursive-include tests/fixtures *
+recursive-include tests *.py

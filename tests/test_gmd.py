@@ -1,118 +1,665 @@
-import pytest
+import importlib
+
 import pandas as pd
+import pytest
+
 from global_macro_data import (
-    gmd,
+    VALID_VARIABLES,
+    GMDCommandError,
     get_available_versions,
     get_current_version,
-    list_variables,
+    gmd,
     list_countries,
-    VALID_VARIABLES
+    list_variables,
 )
 
-def test_get_available_versions():
-    """Test getting available versions"""
-    versions = get_available_versions()
-    assert isinstance(versions, list)
-    assert len(versions) > 0
-    assert all(isinstance(v, str) for v in versions)
-    assert all(len(v.split('_')) == 2 for v in versions)
+gmd_module = importlib.import_module("global_macro_data.gmd")
 
-def test_get_current_version():
-    """Test getting current version"""
-    version = get_current_version()
-    assert isinstance(version, str)
-    assert len(version.split('_')) == 2
 
-def test_list_variables(capsys):
-    """Test listing variables"""
-    list_variables()
-    captured = capsys.readouterr()
-    assert "Available variables" in captured.out
-    for var in VALID_VARIABLES:
-        assert var in captured.out
+# ---------------------------------------------------------------------------
+# Helper utilities
+# ---------------------------------------------------------------------------
 
-def test_list_countries(capsys):
-    """Test listing countries"""
-    list_countries()
-    captured = capsys.readouterr()
-    assert "Country and territories" in captured.out
-    assert "Code" in captured.out
+class TestTokens:
+    def test_none_returns_empty(self):
+        assert gmd_module._tokens(None) == []
 
-def test_gmd_default():
-    """Test default gmd call"""
-    df = gmd()
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) > 0
-    assert all(col in df.columns for col in ["ISO3", "countryname", "year"])
+    def test_string_splits_on_spaces(self):
+        assert gmd_module._tokens("a b c") == ["a", "b", "c"]
 
-def test_gmd_version():
-    """Test gmd with specific version"""
-    version = get_current_version()
-    df = gmd(version=version)
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) > 0
+    def test_string_splits_on_commas(self):
+        assert gmd_module._tokens("a,b,c") == ["a", "b", "c"]
 
-def test_gmd_country():
-    """Test gmd with specific country"""
-    df = gmd(country="USA")
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) > 0
-    assert all(df["ISO3"] == "USA")
+    def test_list_of_strings(self):
+        assert gmd_module._tokens(["a", "b c"]) == ["a", "b", "c"]
 
-def test_gmd_countries():
-    """Test gmd with multiple countries"""
-    df = gmd(country=["USA", "CHN"])
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) > 0
-    assert set(df["ISO3"].unique()) == {"USA", "CHN"}
+    def test_nested_sequences(self):
+        assert gmd_module._tokens(["a b", "c,d"]) == ["a", "b", "c", "d"]
 
-def test_gmd_variables():
-    """Test gmd with specific variables"""
-    df = gmd(variables=["rGDP", "infl"])
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) > 0
-    assert all(col in df.columns for col in ["rGDP", "infl"])
+    def test_numeric_in_list(self):
+        assert gmd_module._tokens([1, 2]) == ["1", "2"]
 
-def test_gmd_raw():
-    """Test gmd with raw data option"""
-    df = gmd(variables="rGDP", raw=True)
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) > 0
-    assert "rGDP" in df.columns
 
-def test_gmd_combinations():
-    """Test gmd with multiple parameters"""
-    df = gmd(
-        version=get_current_version(),
-        country=["USA", "CHN"],
-        variables=["rGDP", "infl"]
-    )
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) > 0
-    assert set(df["ISO3"].unique()) == {"USA", "CHN"}
-    assert all(col in df.columns for col in ["rGDP", "infl"])
+class TestIsFastYes:
+    def test_true(self):
+        assert gmd_module._is_fast_yes(True) is True
 
-def test_gmd_invalid_version():
-    """Test gmd with invalid version"""
-    with pytest.raises(ValueError):
-        gmd(version="invalid_version")
+    def test_false(self):
+        assert gmd_module._is_fast_yes(False) is False
 
-def test_gmd_invalid_country():
-    """Test gmd with invalid country"""
-    with pytest.raises(ValueError):
-        gmd(country="INVALID")
+    def test_string_yes(self):
+        assert gmd_module._is_fast_yes("yes") is True
 
-def test_gmd_invalid_variable():
-    """Test gmd with invalid variable"""
-    with pytest.raises(ValueError):
-        gmd(variables="INVALID")
+    def test_string_YES(self):
+        assert gmd_module._is_fast_yes("YES") is True
 
-def test_gmd_raw_multiple_variables():
-    """Test gmd raw option with multiple variables"""
-    with pytest.raises(ValueError):
-        gmd(variables=["rGDP", "infl"], raw=True)
+    def test_string_no(self):
+        assert gmd_module._is_fast_yes("no") is False
 
-def test_gmd_raw_no_variable():
-    """Test gmd raw option without variable"""
-    with pytest.raises(ValueError):
-        gmd(raw=True) 
+    def test_none(self):
+        assert gmd_module._is_fast_yes(None) is False
+
+
+class TestNormalizeSourceName:
+    def test_cs_alias_rewrite(self):
+        assert gmd_module._normalize_source_name("CS1_ARG") == "ARG_1"
+
+    def test_cs_alias_preserves_case(self):
+        assert gmd_module._normalize_source_name("CS1_arg") == "arg_1"
+
+    def test_non_cs_passthrough(self):
+        assert gmd_module._normalize_source_name("IMF_IFS") == "IMF_IFS"
+
+    def test_short_cs_passthrough(self):
+        assert gmd_module._normalize_source_name("CS1") == "CS1"
+
+    def test_whitespace_stripped(self):
+        assert gmd_module._normalize_source_name("  IMF_IFS  ") == "IMF_IFS"
+
+
+class TestFormatBibtex:
+    def test_splits_fields_onto_newlines(self):
+        raw = '@misc{foo, author={A}, year={2025}}'
+        result = gmd_module._format_bibtex_for_print(raw)
+        assert "\n" in result
+        assert "author=" in result
+
+    def test_closing_brace_on_own_line(self):
+        raw = '@misc{foo, title={T}}'
+        result = gmd_module._format_bibtex_for_print(raw)
+        assert result.strip().endswith("}")
+
+
+class TestStripSourcePrefixCols:
+    def test_strips_prefix(self):
+        df = pd.DataFrame(columns=["ISO3", "year", "SRC_a", "SRC_b", "other"])
+        result = gmd_module._strip_source_prefix_cols(df, "SRC")
+        assert result == ["a", "b", "other"]
+
+    def test_skips_id_cols(self):
+        df = pd.DataFrame(columns=["ISO3", "year", "SRC_x"])
+        result = gmd_module._strip_source_prefix_cols(df, "SRC")
+        assert "ISO3" not in result
+        assert "year" not in result
+
+
+class TestSortVersionsDf:
+    def test_sorts_descending(self):
+        df = pd.DataFrame({"versions": ["2025_01", "2025_12", "2025_06"]})
+        result = gmd_module._sort_versions_df(df)
+        assert result["versions"].tolist() == ["2025_12", "2025_06", "2025_01"]
+
+
+# ---------------------------------------------------------------------------
+# Version functions
+# ---------------------------------------------------------------------------
+
+class TestVersions:
+    def test_get_available_versions_returns_nonempty_list(self):
+        versions = get_available_versions()
+        assert isinstance(versions, list)
+        assert len(versions) > 0
+
+    def test_get_available_versions_contains_known_version(self):
+        assert "2025_12" in get_available_versions()
+
+    def test_get_current_version_is_first(self):
+        assert get_current_version() == get_available_versions()[0]
+
+    def test_version_list_output(self, capsys):
+        result = gmd(version="list")
+        out = capsys.readouterr().out
+        assert result is None
+        assert "2025_12" in out
+
+    def test_version_list_is_sorted(self, capsys):
+        gmd(version="list")
+        out = capsys.readouterr().out
+        lines = [line.strip() for line in out.splitlines() if line.strip()]
+        assert lines == sorted(lines)
+
+    def test_version_current_prints_latest(self, capsys):
+        gmd(version="current")
+        out = capsys.readouterr().out
+        assert f"Current version: {get_current_version()}" in out
+
+    def test_invalid_version_raises(self, capsys):
+        with pytest.raises(GMDCommandError) as exc:
+            gmd(version="invalid_version")
+        out = capsys.readouterr().out
+        assert "Error: Version invalid_version does not exist" in out
+        assert "Available versions:" in str(exc.value)
+
+    def test_multi_token_version_returns_none(self, capsys):
+        result = gmd(version="2025_12 current")
+        out = capsys.readouterr().out
+        assert result is None
+        assert "Version must either be one specific version" in out
+
+    def test_specific_version_loads_data(self):
+        df = gmd(version="2025_12")
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) > 0
+
+
+# ---------------------------------------------------------------------------
+# Print / citation
+# ---------------------------------------------------------------------------
+
+class TestPrintOption:
+    def test_print_gmd(self, capsys):
+        result = gmd(print_option="GMD")
+        out = capsys.readouterr().out
+        assert result is None
+        assert "Müller, K., Xu, C., Lehbib, M., & Chen, Z. (2025)." in out
+
+    def test_print_stata(self, capsys):
+        result = gmd(print_option="Stata")
+        out = capsys.readouterr().out
+        assert result is None
+        assert "Lehbib, M. & Müller, K. (2025)." in out
+
+    def test_print_keyword_alias(self, capsys):
+        result = gmd(**{"print": "Stata"})
+        out = capsys.readouterr().out
+        assert result is None
+        assert "Lehbib, M. & Müller, K. (2025)." in out
+
+    def test_invalid_print_option_raises_198(self):
+        with pytest.raises(GMDCommandError) as exc:
+            gmd(print_option="bad")
+        assert exc.value.code == 198
+
+    def test_print_and_print_option_both_raises_type_error(self):
+        with pytest.raises(TypeError, match="Specify either"):
+            gmd(print_option="GMD", **{"print": "Stata"})
+
+    def test_unexpected_kwarg_raises_type_error(self):
+        with pytest.raises(TypeError, match="Unexpected keyword"):
+            gmd(foo="bar")
+
+
+# ---------------------------------------------------------------------------
+# Citation
+# ---------------------------------------------------------------------------
+
+class TestCite:
+    def test_cite_load_returns_dataframe(self):
+        bib_df = gmd(cite="load")
+        assert isinstance(bib_df, pd.DataFrame)
+        assert "citation" in bib_df.columns
+        assert "source_name" in bib_df.columns
+
+    def test_cite_specific_key_prints_bibtex(self, capsys):
+        result = gmd(cite="GMD")
+        out = capsys.readouterr().out
+        assert result is None
+        assert "@techreport" in out
+
+    def test_cite_nonexistent_source_raises(self, capsys):
+        with pytest.raises(GMDCommandError):
+            gmd(cite="NONEXISTENT_SOURCE_XYZ")
+        out = capsys.readouterr().out
+        assert "does not exist" in out
+
+    def test_cite_multiple_tokens_raises(self):
+        with pytest.raises(GMDCommandError, match="Only one citation"):
+            gmd(cite="A B")
+
+
+# ---------------------------------------------------------------------------
+# Default load and variable filtering
+# ---------------------------------------------------------------------------
+
+class TestDefaultLoad:
+    def test_default_returns_dataframe_with_id_cols(self, capsys):
+        df = gmd()
+        out = capsys.readouterr().out
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) > 0
+        assert {"countryname", "ISO3", "id", "year"}.issubset(df.columns)
+        assert "Global Macro Database by Müller, Xu, Lehbib, and Chen (2025)" in out
+        assert "Website: https://www.globalmacrodata.com" in out
+
+    def test_summary_contains_citation_instructions(self, capsys):
+        gmd(variables="rGDP", version="2025_12")
+        out = capsys.readouterr().out
+        assert "When using these data, please cite:" in out
+        assert 'gmd(cite="GMD")' in out
+        assert "When using the gmd command, please further cite:" in out
+
+    def test_summary_contains_fast_hint_when_not_cached(self, capsys):
+        gmd(variables="rGDP", version="2025_12")
+        out = capsys.readouterr().out
+        assert 'gmd(version="2025_12", fast="yes")' in out
+
+    def test_variables_keep_order(self):
+        df = gmd(variables=["rGDP", "infl"], version="2025_12")
+        assert list(df.columns) == ["ISO3", "year", "id", "countryname", "rGDP", "infl"]
+
+    def test_single_variable_string(self):
+        df = gmd(variables="rGDP", version="2025_12")
+        assert "rGDP" in df.columns
+
+    def test_identifying_var_as_variable_keeps_unique_columns(self):
+        df = gmd(variables=["year", "rGDP"], version="2025_12")
+        assert isinstance(df, pd.DataFrame)
+        assert df.columns.tolist().count("year") == 1
+        assert "rGDP" in df.columns
+
+    def test_identifying_var_alone_raises(self, capsys):
+        with pytest.raises(GMDCommandError):
+            gmd(variables="ISO3", version="2025_12")
+        out = capsys.readouterr().out
+        assert "identifying variable" in out
+
+    def test_invalid_variable_raises(self):
+        with pytest.raises(GMDCommandError):
+            gmd(variables="INVALID", version="2025_12")
+
+    def test_all_columns_dropped_if_all_nan(self):
+        df = gmd(variables="rGDP", version="2025_12", country="USA")
+        for col in df.columns:
+            assert df[col].notna().any()
+
+
+# ---------------------------------------------------------------------------
+# Country filtering
+# ---------------------------------------------------------------------------
+
+class TestCountryFilter:
+    def test_single_country(self):
+        df = gmd(version="2025_12", country="USA")
+        assert set(df["ISO3"].unique()) == {"USA"}
+
+    def test_multiple_countries(self):
+        df = gmd(version="2025_12", country=["USA", "CHN"])
+        assert set(df["ISO3"].unique()) == {"USA", "CHN"}
+
+    def test_country_string_with_spaces(self):
+        df = gmd(version="2025_12", country="USA CHN")
+        assert set(df["ISO3"].unique()) == {"USA", "CHN"}
+
+    def test_country_string_with_commas(self):
+        df = gmd(version="2025_12", country="USA,CHN")
+        assert set(df["ISO3"].unique()) == {"USA", "CHN"}
+
+    def test_invalid_country_raises(self):
+        with pytest.raises(GMDCommandError):
+            gmd(country="INVALID", version="2025_12")
+
+    def test_mixed_valid_invalid_returns_partial_in_exception(self):
+        with pytest.raises(GMDCommandError) as exc:
+            gmd(country=["USA", "INVALID"], version="2025_12")
+        assert exc.value.code == 498
+        assert isinstance(exc.value.data, pd.DataFrame)
+        assert set(exc.value.data["ISO3"].unique()) == {"USA"}
+
+    def test_country_load_returns_dataframe(self):
+        cty_df = gmd(country="load")
+        assert isinstance(cty_df, pd.DataFrame)
+        assert "ISO3" in cty_df.columns
+        assert "countryname" in cty_df.columns
+
+    def test_country_list_always_prints_table(self, capsys):
+        result = gmd(country="list")
+        out = capsys.readouterr().out
+        assert result is None
+        assert "Available countries:" in out
+
+    def test_iso_parameter_aliases_country_list(self, capsys):
+        result = gmd(iso=True)
+        out = capsys.readouterr().out
+        assert result is None
+        assert "Available countries:" in out
+
+
+# ---------------------------------------------------------------------------
+# Variables listing
+# ---------------------------------------------------------------------------
+
+class TestVarsOption:
+    def test_vars_load_returns_dataframe(self):
+        var_df = gmd(vars="load")
+        assert isinstance(var_df, pd.DataFrame)
+        assert {"variables", "units", "definition"}.issubset(var_df.columns)
+
+    def test_vars_list_prints_table(self, capsys):
+        result = gmd(vars="list")
+        out = capsys.readouterr().out
+        assert result is None
+        assert "Available variables:" in out
+        assert "Definition" in out
+        assert "nGDP" in out
+
+    def test_vars_true_aliases_list(self, capsys):
+        result = gmd(vars=True)
+        out = capsys.readouterr().out
+        assert result is None
+        assert "Available variables:" in out
+
+    def test_vars_false_is_noop(self, capsys):
+        df = gmd(vars=False, version="2025_12")
+        assert isinstance(df, pd.DataFrame)
+
+    def test_list_variables_function(self, capsys):
+        list_variables()
+        out = capsys.readouterr().out
+        assert "Available variables:" in out
+        assert "nGDP" in out
+
+    def test_list_countries_function(self, capsys):
+        list_countries()
+        out = capsys.readouterr().out
+        assert "Available countries:" in out
+        assert "ISO3 code" in out
+
+
+# ---------------------------------------------------------------------------
+# Raw data
+# ---------------------------------------------------------------------------
+
+class TestRaw:
+    def test_raw_single_variable(self, capsys):
+        df = gmd(variables="rGDP", raw=True, version="2025_12")
+        out = capsys.readouterr().out
+        assert isinstance(df, pd.DataFrame)
+        assert "Loaded raw data on rGDP" in out
+        assert "rGDP" in df.columns
+
+    def test_raw_multiple_variables_raises(self):
+        with pytest.raises(GMDCommandError):
+            gmd(variables=["rGDP", "infl"], raw=True, version="2025_12")
+
+    def test_raw_no_variable_raises(self):
+        with pytest.raises(GMDCommandError):
+            gmd(raw=True, version="2025_12")
+
+    def test_raw_fallback_valid_variable_reports_no_raw_data(self, monkeypatch):
+        """When raw CSV is missing but the variable exists in varlist, report 'no raw data'."""
+        original_read_csv_primary = gmd_module._read_csv_primary
+
+        def _fake_read_csv_primary(path, **kwargs):
+            if path.startswith("distribute/"):
+                raise RuntimeError("forced failure")
+            return original_read_csv_primary(path, **kwargs)
+
+        def _fake_varlist_df():
+            return pd.DataFrame({
+                "variables": ["rGDP", "infl"],
+                "units": ["in LC", "in %"],
+                "definition": ["Real GDP", "Inflation"],
+            })
+
+        monkeypatch.setattr(gmd_module, "_read_csv_primary", _fake_read_csv_primary)
+        monkeypatch.setattr(gmd_module, "_varlist_df", _fake_varlist_df)
+
+        with pytest.raises(GMDCommandError) as exc:
+            gmd(variables="rGDP", raw=True, version="2025_12")
+        assert str(exc.value) == "Variable does not have raw data."
+
+    def test_raw_fallback_invalid_variable_reports_not_valid(self, monkeypatch):
+        """When raw CSV is missing and the variable isn't in varlist, report 'not valid'."""
+        original_read_csv_primary = gmd_module._read_csv_primary
+
+        def _fake_read_csv_primary(path, **kwargs):
+            if path.startswith("distribute/"):
+                raise RuntimeError("forced failure")
+            return original_read_csv_primary(path, **kwargs)
+
+        def _fake_varlist_df():
+            return pd.DataFrame({
+                "variables": ["rGDP", "infl"],
+                "units": ["in LC", "in %"],
+                "definition": ["Real GDP", "Inflation"],
+            })
+
+        monkeypatch.setattr(gmd_module, "_read_csv_primary", _fake_read_csv_primary)
+        monkeypatch.setattr(gmd_module, "_varlist_df", _fake_varlist_df)
+
+        with pytest.raises(GMDCommandError) as exc:
+            gmd(variables="FAKE_VAR", raw=True, version="2025_12")
+        assert str(exc.value) == "Specified variable is not valid."
+
+
+# ---------------------------------------------------------------------------
+# Sources
+# ---------------------------------------------------------------------------
+
+class TestSources:
+    def test_sources_load(self, capsys):
+        source_df = gmd(sources="load")
+        out = capsys.readouterr().out
+        assert isinstance(source_df, pd.DataFrame)
+        assert "source_name" in source_df.columns
+        assert "Imported the list of sources." in out
+
+    def test_sources_list(self, capsys):
+        result = gmd(sources="list")
+        out = capsys.readouterr().out
+        assert result is None
+        assert "IMF_IFS" in out
+
+    def test_sources_list_is_sorted(self, capsys):
+        gmd(sources="list")
+        out = capsys.readouterr().out
+        lines = [line.strip() for line in out.splitlines() if line.strip()]
+        assert lines == sorted(lines)
+
+    def test_sources_specific_query(self):
+        df = gmd(sources="IMF_IFS", variables="rGDP", country="USA", version="2025_12")
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) > 0
+        assert "IMF_IFS_rGDP" in df.columns
+
+    def test_sources_specific_without_variable_returns_full(self):
+        df = gmd(sources="IMF_IFS", version="2025_12")
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) > 0
+
+    def test_sources_invalid_variable_exits_gracefully(self, capsys):
+        result = gmd(sources="IMF_IFS", variables="NOT_A_VAR", version="2025_12")
+        out = capsys.readouterr().out
+        assert result is None
+        assert "This source doesn't have data on NOT_A_VAR." in out
+
+    def test_sources_invalid_country_returns_empty(self):
+        df = gmd(sources="IMF_IFS", variables="rGDP", country="XXX", version="2025_12")
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) == 0
+
+    def test_sources_cs_alias(self):
+        df = gmd(sources="CS1_ARG", version="2025_12")
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) > 0
+
+    def test_sources_invalid_name_raises(self, capsys):
+        with pytest.raises(GMDCommandError):
+            gmd(sources="TOTALLY_FAKE_SOURCE", version="2025_12")
+        out = capsys.readouterr().out
+        assert "Invalid source name" in out
+
+    def test_sources_with_raw_prints_note(self, capsys):
+        gmd(sources="load", raw=True)
+        out = capsys.readouterr().out
+        assert "raw option is specified" in out
+
+
+# ---------------------------------------------------------------------------
+# Caching (fast option)
+# ---------------------------------------------------------------------------
+
+class TestFastCaching:
+    def test_fast_yes_saves_gmd_files(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(gmd_module, "_CACHE_DIR", tmp_path / "gmd_cache")
+        df = gmd(version="2025_12", fast="yes")
+        assert isinstance(df, pd.DataFrame)
+        assert (gmd_module._CACHE_DIR / "GMD_2025_12.dta").exists()
+        assert (gmd_module._CACHE_DIR / "GMD.dta").exists()
+
+    def test_fast_true_saves_gmd_files(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(gmd_module, "_CACHE_DIR", tmp_path / "gmd_cache")
+        df = gmd(version="2025_12", fast=True)
+        assert isinstance(df, pd.DataFrame)
+        assert (gmd_module._CACHE_DIR / "GMD_2025_12.dta").exists()
+
+    def test_country_list_fast_yes_saves_and_prints(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr(gmd_module, "_CACHE_DIR", tmp_path / "gmd_cache")
+        result = gmd(country="list", fast="yes")
+        out = capsys.readouterr().out
+        assert result is None
+        assert "Saving countrylist dataframe locally" in out
+        assert "Available countries:" in out
+
+    def test_cached_version_is_reused(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(gmd_module, "_CACHE_DIR", tmp_path / "gmd_cache")
+        gmd(version="2025_12", fast="yes")
+        # Second load should use cached file
+        df2 = gmd(version="2025_12")
+        assert isinstance(df2, pd.DataFrame)
+        assert len(df2) > 0
+
+
+# ---------------------------------------------------------------------------
+# Network option
+# ---------------------------------------------------------------------------
+
+class TestNetwork:
+    def test_network_yes_loads_data(self):
+        df = gmd(version="2025_12", network="yes")
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) > 0
+
+
+# ---------------------------------------------------------------------------
+# Offline fallback
+# ---------------------------------------------------------------------------
+
+class TestOfflineFallback:
+    @pytest.fixture()
+    def go_offline(self, tmp_path, monkeypatch):
+        """Populate a local cache then cut off network access."""
+        monkeypatch.setattr(gmd_module, "_CACHE_DIR", tmp_path / "gmd_cache")
+        gmd(version="2025_12", fast="yes")
+        gmd_module._versions_df.cache_clear()
+
+        def _fail_fetch(path):
+            raise RuntimeError("no internet")
+
+        monkeypatch.setattr(gmd_module, "_fetch_primary", _fail_fetch)
+        monkeypatch.setattr(gmd_module, "_fetch_secondary", _fail_fetch)
+
+    def test_offline_no_cache_raises(self, monkeypatch):
+        def _fail_fetch(path):
+            raise RuntimeError("no internet")
+
+        monkeypatch.setattr(gmd_module, "_fetch_primary", _fail_fetch)
+        monkeypatch.setattr(gmd_module, "_fetch_secondary", _fail_fetch)
+        monkeypatch.setattr(gmd_module, "_default_local_gmd_path", lambda: None)
+        gmd_module._versions_df.cache_clear()
+
+        with pytest.raises(GMDCommandError, match="Local version not found"):
+            gmd(version="2025_12")
+
+    def test_offline_with_local_cache(self, go_offline, capsys):
+        df = gmd()
+        out = capsys.readouterr().out
+        assert isinstance(df, pd.DataFrame)
+        assert "Loading local version" in out
+
+    def test_offline_blocks_raw(self, go_offline):
+        with pytest.raises(GMDCommandError, match="internet"):
+            gmd(variables="rGDP", raw=True)
+
+    def test_offline_blocks_cite(self, go_offline):
+        with pytest.raises(GMDCommandError, match="internet"):
+            gmd(cite="load")
+
+    def test_offline_blocks_sources(self, go_offline):
+        with pytest.raises(GMDCommandError, match="internet"):
+            gmd(sources="load")
+
+
+# ---------------------------------------------------------------------------
+# VALID_VARIABLES constant
+# ---------------------------------------------------------------------------
+
+class TestValidVariables:
+    def test_contains_core_variables(self):
+        for var in ("rGDP", "infl", "pop", "unemp", "CPI"):
+            assert var in VALID_VARIABLES
+
+    def test_contains_fiscal_variables(self):
+        assert "cgovdebt" in VALID_VARIABLES
+        assert "gen_govtax_GDP" in VALID_VARIABLES
+
+    def test_contains_crisis_variables(self):
+        for var in ("BankingCrisis", "SovDebtCrisis", "CurrencyCrisis"):
+            assert var in VALID_VARIABLES
+
+
+# ---------------------------------------------------------------------------
+# GMDCommandError
+# ---------------------------------------------------------------------------
+
+class TestGMDCommandError:
+    def test_default_code(self):
+        err = GMDCommandError("test")
+        assert err.code == 498
+        assert str(err) == "test"
+        assert err.data is None
+
+    def test_custom_code_and_data(self):
+        df = pd.DataFrame({"a": [1]})
+        err = GMDCommandError("msg", code=111, data=df)
+        assert err.code == 111
+        assert err.data is df
+
+    def test_is_runtime_error(self):
+        assert issubclass(GMDCommandError, RuntimeError)
+
+
+# ---------------------------------------------------------------------------
+# Cache helpers
+# ---------------------------------------------------------------------------
+
+class TestCacheHelpers:
+    def test_cache_versions_empty_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(gmd_module, "_CACHE_DIR", tmp_path / "nonexistent")
+        assert gmd_module._cache_versions() == []
+
+    def test_cache_versions_finds_files(self, tmp_path, monkeypatch):
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        (cache_dir / "GMD_2025_12.dta").touch()
+        (cache_dir / "GMD_2025_06.dta").touch()
+        (cache_dir / "other.dta").touch()
+        monkeypatch.setattr(gmd_module, "_CACHE_DIR", cache_dir)
+        versions = gmd_module._cache_versions()
+        assert "2025_12" in versions
+        assert "2025_06" in versions
+        assert versions[0] == "2025_12"  # sorted descending
+
+    def test_default_local_gmd_path_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(gmd_module, "_CACHE_DIR", tmp_path / "empty")
+        assert gmd_module._default_local_gmd_path() is None

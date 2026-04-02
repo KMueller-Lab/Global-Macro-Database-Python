@@ -1,4 +1,7 @@
+LICENSE
+MANIFEST.in
 README.md
+pyproject.toml
 setup.py
 global_macro_data/__init__.py
 global_macro_data/gmd.py
@@ -7,4 +10,14 @@ global_macro_data.egg-info/SOURCES.txt
 global_macro_data.egg-info/dependency_links.txt
 global_macro_data.egg-info/requires.txt
 global_macro_data.egg-info/top_level.txt
+tests/conftest.py
 tests/test_gmd.py
+tests/fixtures/clean/ARG_1.dta
+tests/fixtures/clean/IMF_IFS.dta
+tests/fixtures/final/GMD_2025_12.dta
+tests/fixtures/final/rGDP_2025_12.csv
+tests/fixtures/helpers/bib_dataframe.csv
+tests/fixtures/helpers/countrylist.dta
+tests/fixtures/helpers/source_list.csv
+tests/fixtures/helpers/varlist.csv
+tests/fixtures/helpers/versions.csv
