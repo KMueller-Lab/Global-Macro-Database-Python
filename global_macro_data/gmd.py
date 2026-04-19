@@ -139,6 +139,11 @@ def _tokens(value: Union[str, Sequence[str], None]) -> List[str]:
     if isinstance(value, str):
         bits = value.replace(",", " ").split()
         return [bit.strip() for bit in bits if bit.strip()]
+    if not isinstance(value, (list, tuple)):
+        raise GMDCommandError(
+            f"Expected a string or sequence of strings, got {type(value).__name__}.",
+            code=198,
+        )
     out: List[str] = []
     for item in value:
         if isinstance(item, str):
@@ -330,13 +335,16 @@ def _strip_source_prefix_cols(df: pd.DataFrame, source: str) -> List[str]:
 def get_available_versions() -> List[str]:
     try:
         return _versions_df()["versions"].astype(str).tolist()
-    except RuntimeError:
+    except RuntimeError as exc:
         versions = _cache_versions()
         if versions:
             return versions
         if _default_local_gmd_path() is not None:
             return ["local"]
-        raise
+        raise GMDCommandError(
+            "Unable to fetch the list of available GMD versions. "
+            "Check your internet connection or raise an issue."
+        ) from exc
 
 
 def get_current_version() -> str:
