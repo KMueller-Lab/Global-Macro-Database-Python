@@ -60,6 +60,73 @@ class TestIsFastYes:
         assert gmd_module._is_fast_yes(None) is False
 
 
+class TestCoerceFlag:
+    def test_bool_passthrough(self):
+        assert gmd_module._coerce_flag(True, "raw") is True
+        assert gmd_module._coerce_flag(False, "raw") is False
+
+    def test_none_is_false(self):
+        assert gmd_module._coerce_flag(None, "raw") is False
+
+    def test_truthy_strings(self):
+        for token in ("yes", "Y", "TRUE", "1", "on", " On "):
+            assert gmd_module._coerce_flag(token, "fast") is True
+
+    def test_falsey_strings(self):
+        for token in ("no", "N", "false", "0", "off", ""):
+            assert gmd_module._coerce_flag(token, "raw") is False
+
+    def test_invalid_string_raises(self):
+        with pytest.raises(GMDCommandError):
+            gmd_module._coerce_flag("maybe", "raw")
+
+    def test_invalid_type_raises(self):
+        with pytest.raises(GMDCommandError):
+            gmd_module._coerce_flag(2.5, "raw")
+
+
+class TestFlagCoercionInGmd:
+    def test_raw_no_does_not_load_raw(self, capsys):
+        df = gmd(variables="rGDP", raw="no", version="2025_12")
+        out = capsys.readouterr().out
+        assert isinstance(df, pd.DataFrame)
+        assert "Loaded raw data on rGDP" not in out
+
+    def test_raw_yes_loads_raw(self, capsys):
+        df = gmd(variables="rGDP", raw="yes", version="2025_12")
+        out = capsys.readouterr().out
+        assert isinstance(df, pd.DataFrame)
+        assert "Loaded raw data on rGDP" in out
+
+    def test_iso_no_does_not_alias_country_list(self, capsys):
+        result = gmd(iso="no", version="2025_12")
+        out = capsys.readouterr().out
+        assert isinstance(result, pd.DataFrame)
+        assert "Available countries:" not in out
+
+    def test_raw_invalid_string_raises(self):
+        with pytest.raises(GMDCommandError):
+            gmd(variables="rGDP", raw="maybe", version="2025_12")
+
+    def test_iso_invalid_string_raises(self):
+        with pytest.raises(GMDCommandError):
+            gmd(iso="maybe", version="2025_12")
+
+    def test_fast_numeric_string_now_caches(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(gmd_module, "_CACHE_DIR", tmp_path / "gmd_cache")
+        gmd(version="2025_12", fast="1")
+        assert (gmd_module._CACHE_DIR / "GMD_2025_12.dta").exists()
+
+    def test_fast_no_does_not_cache(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(gmd_module, "_CACHE_DIR", tmp_path / "gmd_cache")
+        gmd(version="2025_12", fast="no")
+        assert not (gmd_module._CACHE_DIR / "GMD_2025_12.dta").exists()
+
+    def test_fast_invalid_string_raises(self):
+        with pytest.raises(GMDCommandError):
+            gmd(version="2025_12", fast="sometimes")
+
+
 class TestNormalizeSourceName:
     def test_cs_alias_rewrite(self):
         assert gmd_module._normalize_source_name("CS1_ARG") == "ARG_1"
@@ -160,6 +227,39 @@ class TestVersions:
         df = gmd(version="2025_12")
         assert isinstance(df, pd.DataFrame)
         assert len(df) > 0
+
+    def test_listed_version_with_missing_file_gives_clear_error(self, capsys, monkeypatch):
+        """A version listed in versions.csv whose .dta is unreachable must yield a
+        clear 'data file ... could not be retrieved' message, not a bare
+        'raise an issue' nor a raw RuntimeError."""
+        original = gmd_module._read_dta_primary
+
+        def _fake_read_dta_primary(path):
+            if path.startswith("distribute/GMD_"):
+                raise RuntimeError("404 Not Found")
+            return original(path)
+
+        monkeypatch.setattr(gmd_module, "_read_dta_primary", _fake_read_dta_primary)
+
+        with pytest.raises(GMDCommandError) as exc:
+            gmd(version="2025_12")
+        out = capsys.readouterr().out
+        assert "could not be retrieved" in out
+        assert "2025_12" in out
+        assert exc.value.code == 498
+
+    def test_get_available_versions_offline_no_cache_raises_command_error(self, tmp_path, monkeypatch):
+        """When the metadata cannot be loaded and no local fallback exists, the
+        failure must surface as GMDCommandError, not a raw RuntimeError."""
+        def _boom():
+            raise RuntimeError("forced offline")
+
+        monkeypatch.setattr(gmd_module, "_CACHE_DIR", tmp_path / "empty")
+        monkeypatch.setattr(gmd_module, "_versions_df", _boom)
+        monkeypatch.setattr(gmd_module, "_default_local_gmd_path", lambda: None)
+
+        with pytest.raises(GMDCommandError):
+            get_available_versions()
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +387,47 @@ class TestDefaultLoad:
 # Country filtering
 # ---------------------------------------------------------------------------
 
+class TestYearRange:
+    def test_start_year_filters_lower_bound(self):
+        full = gmd(variables="rGDP", country="USA", version="2025_12")
+        df = gmd(variables="rGDP", country="USA", version="2025_12", start_year=2022)
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) > 0
+        assert df["year"].min() >= 2022
+        assert len(df) < len(full)  # filtering actually removed rows
+
+    def test_end_year_filters_upper_bound(self):
+        df = gmd(variables="rGDP", country="USA", version="2025_12", end_year=2022)
+        assert isinstance(df, pd.DataFrame)
+        assert df["year"].max() <= 2022
+
+    def test_year_window(self):
+        df = gmd(variables="rGDP", country="USA", version="2025_12",
+                 start_year=2020, end_year=2025)
+        assert df["year"].min() >= 2020
+        assert df["year"].max() <= 2025
+
+    def test_string_years_accepted(self):
+        df = gmd(variables="rGDP", country="USA", version="2025_12",
+                 start_year="2020", end_year="2025")
+        assert df["year"].min() >= 2020
+        assert df["year"].max() <= 2025
+
+    def test_start_after_end_raises(self):
+        with pytest.raises(GMDCommandError, match="cannot be greater"):
+            gmd(variables="rGDP", version="2025_12", start_year=2020, end_year=2000)
+
+    def test_invalid_year_raises(self):
+        with pytest.raises(GMDCommandError, match="integer year"):
+            gmd(variables="rGDP", version="2025_12", start_year="not_a_year")
+
+    def test_unknown_kwarg_still_type_error(self):
+        # start_year/end_year are now real params; genuinely-unknown kwargs must
+        # still raise TypeError (locked behavior, not GMDCommandError).
+        with pytest.raises(TypeError, match="Unexpected keyword"):
+            gmd(variables="rGDP", version="2025_12", totally_unknown=1)
+
+
 class TestCountryFilter:
     def test_single_country(self):
         df = gmd(version="2025_12", country="USA")
@@ -332,6 +473,21 @@ class TestCountryFilter:
         out = capsys.readouterr().out
         assert result is None
         assert "Available countries:" in out
+
+    def test_scalar_int_country_raises_command_error(self, capsys):
+        with pytest.raises(GMDCommandError) as exc:
+            gmd(country=840)
+        assert "country must be a string or a list of strings" in str(exc.value)
+        assert exc.value.code == 498
+
+    def test_scalar_int_variables_raises_command_error(self):
+        with pytest.raises(GMDCommandError):
+            gmd(variables=1234, version="2025_12")
+
+    def test_list_with_int_still_allowed(self):
+        # Lists may contain non-strings (stringified by _tokens); only scalars are rejected.
+        with pytest.raises(GMDCommandError, match="Invalid ISO3 code"):
+            gmd(country=["USA", 840], version="2025_12")
 
 
 # ---------------------------------------------------------------------------
@@ -566,6 +722,10 @@ class TestOfflineFallback:
         def _fail_fetch(path):
             raise RuntimeError("no internet")
 
+        # "No internet" must fail every fetch entrypoint. Data reads now route
+        # through _fetch_first (primary S3 -> GitHub mirror fallback), so it has
+        # to be cut off too, alongside the primary/secondary wrappers.
+        monkeypatch.setattr(gmd_module, "_fetch_first", _fail_fetch)
         monkeypatch.setattr(gmd_module, "_fetch_primary", _fail_fetch)
         monkeypatch.setattr(gmd_module, "_fetch_secondary", _fail_fetch)
 
@@ -573,6 +733,7 @@ class TestOfflineFallback:
         def _fail_fetch(path):
             raise RuntimeError("no internet")
 
+        monkeypatch.setattr(gmd_module, "_fetch_first", _fail_fetch)
         monkeypatch.setattr(gmd_module, "_fetch_primary", _fail_fetch)
         monkeypatch.setattr(gmd_module, "_fetch_secondary", _fail_fetch)
         monkeypatch.setattr(gmd_module, "_default_local_gmd_path", lambda: None)
@@ -663,3 +824,86 @@ class TestCacheHelpers:
     def test_default_local_gmd_path_missing(self, tmp_path, monkeypatch):
         monkeypatch.setattr(gmd_module, "_CACHE_DIR", tmp_path / "empty")
         assert gmd_module._default_local_gmd_path() is None
+
+
+class TestAtomicToStata:
+    def test_writes_file_and_leaves_no_tmp(self, tmp_path):
+        df = pd.DataFrame({"ISO3": ["USA"], "year": [2000], "rGDP": [1.0]})
+        target = tmp_path / "GMD.dta"
+        gmd_module._atomic_to_stata(df, target)
+        assert target.exists()
+        assert not (tmp_path / "GMD.dta.tmp").exists()
+        roundtrip = pd.read_stata(target, convert_categoricals=False)
+        assert list(roundtrip["ISO3"]) == ["USA"]
+
+    def test_failed_write_does_not_clobber_existing(self, tmp_path, monkeypatch):
+        target = tmp_path / "GMD.dta"
+        good = pd.DataFrame({"ISO3": ["USA"], "year": [2000], "rGDP": [1.0]})
+        gmd_module._atomic_to_stata(good, target)
+        original_bytes = target.read_bytes()
+
+        class _Boom:
+            def to_stata(self, *a, **k):
+                raise ValueError("simulated write failure")
+
+        with pytest.raises(ValueError):
+            gmd_module._atomic_to_stata(_Boom(), target)
+        # Existing cache file is untouched, no leftover tmp.
+        assert target.read_bytes() == original_bytes
+        assert not (tmp_path / "GMD.dta.tmp").exists()
+
+
+class TestFetchRobustness:
+    def test_sends_user_agent_and_returns(self, monkeypatch):
+        seen = {}
+
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+        def _fake_get(url, timeout=None, headers=None):
+            seen["headers"] = headers
+            seen["url"] = url
+            return _Resp()
+
+        monkeypatch.setattr(gmd_module.requests, "get", _fake_get)
+        resp = gmd_module._fetch_from("helpers/versions.csv", ("https://example.test",))
+        assert resp is not None
+        assert "User-Agent" in seen["headers"]
+        assert "global-macro-data" in seen["headers"]["User-Agent"]
+
+    def test_retries_transient_then_succeeds(self, monkeypatch):
+        calls = {"n": 0}
+
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+        def _flaky_get(url, timeout=None, headers=None):
+            calls["n"] += 1
+            if calls["n"] < 2:
+                raise gmd_module.requests.ConnectionError("transient")
+            return _Resp()
+
+        monkeypatch.setattr(gmd_module.requests, "get", _flaky_get)
+        monkeypatch.setattr(gmd_module.time, "sleep", lambda *_: None)
+        resp = gmd_module._fetch_from("helpers/versions.csv", ("https://example.test",))
+        assert resp is not None
+        assert calls["n"] == 2
+
+    def test_does_not_retry_on_404(self, monkeypatch):
+        calls = {"n": 0}
+
+        def _not_found_get(url, timeout=None, headers=None):
+            calls["n"] += 1
+            err = gmd_module.requests.HTTPError("404")
+            err.response = type("R", (), {"status_code": 404})()
+            raise err
+
+        monkeypatch.setattr(gmd_module.requests, "get", _not_found_get)
+        slept = {"n": 0}
+        monkeypatch.setattr(gmd_module.time, "sleep", lambda *_: slept.__setitem__("n", slept["n"] + 1))
+        with pytest.raises(RuntimeError, match="Unable to load"):
+            gmd_module._fetch_from("distribute/GMD_2025_01.dta", ("https://example.test",))
+        assert calls["n"] == 1  # no retries on a 4xx
+        assert slept["n"] == 0
