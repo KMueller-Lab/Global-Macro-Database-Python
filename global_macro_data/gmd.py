@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import io
+import os
 import re
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional, Sequence, Union
@@ -17,6 +19,12 @@ _DATA_BASES = (
     "https://raw.githubusercontent.com/KMueller-Lab/Global-Macro-Database/refs/heads/main/data",
 )
 _TIMEOUT_SECONDS = 60
+_MAX_RETRIES = 3
+_BACKOFF_BASE_SECONDS = 0.5
+_USER_AGENT = (
+    f"global-macro-data/{PACKAGE_VERSION} "
+    "(+https://github.com/KMueller-Lab/Global-Macro-Database-Python)"
+)
 _CACHE_DIR = Path.home() / ".global_macro_data"
 _ID_COLS = ("ISO3", "year", "id", "countryname")
 
@@ -83,6 +91,19 @@ def _fail_needs_internet(action: str) -> None:
     _fail(f"You need access to the internet in order to {action}", _NETWORK_HINT, code=498)
 
 
+def _fail_missing_version_data(version: str) -> None:
+    """Raised when a version is listed as available but its data file can't be fetched."""
+    _fail(
+        f"The data file for version {version} could not be retrieved "
+        f"(distribute/GMD_{version}.dta).",
+        "This version is listed as available but its file appears to be missing "
+        "or temporarily unreachable.",
+        f'Try another version (see gmd(version="list")); if this persists, '
+        f"raise an issue at {_ISSUES_URL}",
+        code=498,
+    )
+
+
 def _sort_versions_df(df: pd.DataFrame) -> pd.DataFrame:
     parts = df["versions"].astype(str).str.extract(r"(?P<year>\d{4})_(?P<month>\d{2})")
     df = df.assign(
@@ -94,14 +115,24 @@ def _sort_versions_df(df: pd.DataFrame) -> pd.DataFrame:
 
 def _fetch_from(relative_path: str, bases: Sequence[str]) -> requests.Response:
     errors: List[str] = []
+    headers = {"User-Agent": _USER_AGENT}
     for base in bases:
         url = f"{base}/{relative_path}"
-        try:
-            response = requests.get(url, timeout=_TIMEOUT_SECONDS)
-            response.raise_for_status()
-            return response
-        except requests.RequestException as exc:
-            errors.append(f"{url}: {exc}")
+        for attempt in range(_MAX_RETRIES):
+            try:
+                response = requests.get(url, timeout=_TIMEOUT_SECONDS, headers=headers)
+                response.raise_for_status()
+                return response
+            except requests.RequestException as exc:
+                # Don't retry clear client errors (e.g. 404) — they won't recover.
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                if status is not None and 400 <= status < 500:
+                    errors.append(f"{url}: {exc}")
+                    break
+                if attempt < _MAX_RETRIES - 1:
+                    time.sleep(_BACKOFF_BASE_SECONDS * (2 ** attempt))
+                    continue
+                errors.append(f"{url}: {exc}")
     raise RuntimeError(f"Unable to load '{relative_path}'. {'; '.join(errors)}")
 
 
@@ -126,11 +157,18 @@ def _read_dta(resp: requests.Response) -> pd.DataFrame:
 
 
 def _read_csv_primary(relative_path: str, **kwargs) -> pd.DataFrame:
-    return _read_csv(_fetch_primary(relative_path), **kwargs)
+    # Try the primary S3 release bucket first, then fall back to the GitHub
+    # mirror (_fetch_first walks _DATA_BASES in order), so a file missing from
+    # one channel can still be served by the other.
+    # NOTE: the GitHub mirror only hosts the helpers/* tables (versions.csv,
+    # varlist.csv, countrylist.dta, ...). It does NOT host the versioned release
+    # datasets (distribute/GMD_<ver>.dta) or per-variable raw CSVs, so those
+    # files cannot actually fall back to GitHub and remain S3-only in practice.
+    return _read_csv(_fetch_first(relative_path), **kwargs)
 
 
 def _read_dta_primary(relative_path: str) -> pd.DataFrame:
-    return _read_dta(_fetch_primary(relative_path))
+    return _read_dta(_fetch_first(relative_path))
 
 
 def _tokens(value: Union[str, Sequence[str], None]) -> List[str]:
@@ -148,12 +186,69 @@ def _tokens(value: Union[str, Sequence[str], None]) -> List[str]:
     return out
 
 
+_TRUTHY_FLAGS = frozenset({"yes", "y", "true", "1", "on"})
+_FALSEY_FLAGS = frozenset({"no", "n", "false", "0", "off", ""})
+
+
+def _coerce_flag(value: Optional[Union[str, bool]], name: str) -> bool:
+    """Normalize a boolean-like option (raw/iso/fast) to a real bool.
+
+    Accepts actual booleans, None (treated as False), and a whitelisted set of
+    strings. Any other string (e.g. "maybe") or type raises GMDCommandError so
+    that ambiguous values like raw="no" can never silently activate a behavior.
+    """
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in _TRUTHY_FLAGS:
+            return True
+        if token in _FALSEY_FLAGS:
+            return False
+        _fail(
+            f"Invalid value for {name}: {value!r}. "
+            f"Use a boolean or one of: yes/no, true/false, on/off, 1/0.",
+            code=498,
+        )
+    _fail(
+        f"Invalid value for {name}: expected a boolean or string, "
+        f"got {type(value).__name__}",
+        code=498,
+    )
+    return False  # unreachable; _fail always raises
+
+
 def _is_fast_yes(fast: Optional[Union[str, bool]]) -> bool:
-    if isinstance(fast, bool):
-        return fast
-    if isinstance(fast, str):
-        return fast.strip().lower() == "yes"
-    return False
+    return _coerce_flag(fast, "fast")
+
+
+def _coerce_year(value: Optional[Union[int, str]], name: str) -> Optional[int]:
+    """Normalize a year option to an int, or None if unset. Raises on garbage."""
+    if value is None or (isinstance(value, str) and value.strip() == ""):
+        return None
+    if isinstance(value, bool):
+        _fail(f"{name} must be an integer year, got a boolean", code=498)
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        _fail(f"{name} must be an integer year, got {value!r}", code=498)
+    return None  # unreachable; _fail always raises
+
+
+def _apply_year_range(
+    df: pd.DataFrame, start_year: Optional[int], end_year: Optional[int]
+) -> pd.DataFrame:
+    if (start_year is None and end_year is None) or "year" not in df.columns:
+        return df
+    years = pd.to_numeric(df["year"], errors="coerce")
+    mask = pd.Series(True, index=df.index)
+    if start_year is not None:
+        mask &= years >= start_year
+    if end_year is not None:
+        mask &= years <= end_year
+    return df.loc[mask]
 
 
 def _ensure_cache_dir() -> None:
@@ -183,6 +278,24 @@ def _read_local_df(path: Path) -> pd.DataFrame:
     if path.suffix.lower() == ".dta":
         return pd.read_stata(path, convert_categoricals=False)
     return pd.read_csv(path)
+
+
+def _atomic_to_stata(df: pd.DataFrame, path: Path) -> None:
+    """Write a .dta cache file atomically so an interrupted write can't poison
+    later offline reads. We write to a temp file in the same directory, sanity
+    check it, then os.replace() it into place (atomic on the same filesystem)."""
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        df.to_stata(tmp, write_index=False)
+        if not tmp.exists() or tmp.stat().st_size == 0:
+            raise RuntimeError(f"Refusing to cache empty file for {path.name}")
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 @lru_cache(maxsize=1)
 def _versions_df() -> pd.DataFrame:
@@ -286,7 +399,7 @@ def _summary(
     _emit('For BibTeX: gmd(cite="lehbib2025gmd")  |  For APA: gmd(print_option="Stata")')
     _emit("")
 
-    if (fast is None or str(fast).strip() == "") and (not saved_gmd) and (not raw):
+    if (not fast) and (not saved_gmd) and (not raw):
         _emit(
             f"To save the data locally for faster reloading, use: "
             f'gmd(version="{selected_version}", fast="yes")'
@@ -330,13 +443,19 @@ def _strip_source_prefix_cols(df: pd.DataFrame, source: str) -> List[str]:
 def get_available_versions() -> List[str]:
     try:
         return _versions_df()["versions"].astype(str).tolist()
-    except RuntimeError:
+    except RuntimeError as exc:
+        if isinstance(exc, GMDCommandError):
+            raise
         versions = _cache_versions()
         if versions:
             return versions
         if _default_local_gmd_path() is not None:
             return ["local"]
-        raise
+        raise GMDCommandError(
+            "Unable to load version information. Check your internet connection "
+            f"or report this issue at {_ISSUES_URL}",
+            code=498,
+        ) from exc
 
 
 def get_current_version() -> str:
@@ -362,6 +481,8 @@ def gmd(
     print_option: Optional[str] = None,
     network: Optional[str] = None,
     fast: Optional[Union[str, bool]] = None,
+    start_year: Optional[Union[int, str]] = None,
+    end_year: Optional[Union[int, str]] = None,
     **kwargs,
 ) -> Optional[pd.DataFrame]:
     if "print" in kwargs:
@@ -370,6 +491,26 @@ def gmd(
         print_option = kwargs.pop("print")
     if kwargs:
         raise TypeError(f"Unexpected keyword argument(s): {', '.join(kwargs.keys())}")
+
+    for _arg_name, _arg_value in (("country", country), ("variables", variables)):
+        if _arg_value is not None and not isinstance(_arg_value, (str, list, tuple)):
+            _fail(
+                f"{_arg_name} must be a string or a list of strings, "
+                f"got {type(_arg_value).__name__}",
+                code=498,
+            )
+
+    raw = _coerce_flag(raw, "raw")
+    iso = _coerce_flag(iso, "iso")
+    fast = _coerce_flag(fast, "fast")
+
+    start_year = _coerce_year(start_year, "start_year")
+    end_year = _coerce_year(end_year, "end_year")
+    if start_year is not None and end_year is not None and start_year > end_year:
+        _fail(
+            f"start_year ({start_year}) cannot be greater than end_year ({end_year})",
+            code=498,
+        )
 
     if iso:
         country = "list"
@@ -623,9 +764,9 @@ def gmd(
                 cty_df = _country_df().copy()
             except RuntimeError:
                 _fail_with_issue("country list")
-            if _is_fast_yes(fast):
+            if fast:
                 _emit("Saving countrylist dataframe locally")
-                cty_df.to_stata(local_country, write_index=False)
+                _atomic_to_stata(cty_df, local_country)
 
         if mode == "load":
             return cty_df
@@ -647,19 +788,19 @@ def gmd(
             if local_version.exists():
                 saved_gmd = True
                 df = pd.read_stata(local_version, convert_categoricals=False)
-            elif _is_fast_yes(fast):
+            elif fast:
                 try:
                     df = _read_dta_primary(f"distribute/GMD_{selected_version}.dta")
                 except RuntimeError:
-                    _fail_with_issue("the data")
-                df.to_stata(local_version, write_index=False)
-                df.to_stata(_CACHE_DIR / "GMD.dta", write_index=False)
+                    _fail_missing_version_data(selected_version)
+                _atomic_to_stata(df, local_version)
+                _atomic_to_stata(df, _CACHE_DIR / "GMD.dta")
                 _emit(f"GMD dataset loaded and saved locally in {_CACHE_DIR}.")
             else:
                 try:
                     df = _read_dta_primary(f"distribute/GMD_{selected_version}.dta")
                 except RuntimeError:
-                    _fail_with_issue("the data")
+                    _fail_missing_version_data(selected_version)
         else:
             df = _read_local_df(gmd_local_path)
 
@@ -723,6 +864,8 @@ def gmd(
                 raise GMDCommandError("Invalid ISO3 code", code=498, data=df.dropna(axis=1, how="all"))
 
             df = df.loc[keep_mask]
+
+    df = _apply_year_range(df, start_year, end_year)
 
     df = df.dropna(axis=1, how="all")
 
