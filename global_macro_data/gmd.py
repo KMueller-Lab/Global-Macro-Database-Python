@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import io
 import re
+import shutil
+import time
+import uuid
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional, Sequence, Union
+from typing import List, Optional, Sequence, Tuple, Union
 
 import pandas as pd
 import requests
@@ -16,7 +19,8 @@ _DATA_BASES = (
     "https://gmd-releases.s3.ap-southeast-2.amazonaws.com/data",
     "https://raw.githubusercontent.com/KMueller-Lab/Global-Macro-Database/refs/heads/main/data",
 )
-_TIMEOUT_SECONDS = 60
+_TIMEOUT_SECONDS = 15
+_USER_AGENT = "global-macro-data/2.0.0 (+https://github.com/KMueller-Lab/Global-Macro-Database-Python)"
 _CACHE_DIR = Path.home() / ".global_macro_data"
 _ID_COLS = ("ISO3", "year", "id", "countryname")
 
@@ -94,14 +98,20 @@ def _sort_versions_df(df: pd.DataFrame) -> pd.DataFrame:
 
 def _fetch_from(relative_path: str, bases: Sequence[str]) -> requests.Response:
     errors: List[str] = []
+    headers = {"User-Agent": _USER_AGENT}
     for base in bases:
         url = f"{base}/{relative_path}"
-        try:
-            response = requests.get(url, timeout=_TIMEOUT_SECONDS)
-            response.raise_for_status()
-            return response
-        except requests.RequestException as exc:
-            errors.append(f"{url}: {exc}")
+        for attempt in range(3):
+            try:
+                response = requests.get(url, timeout=_TIMEOUT_SECONDS, headers=headers)
+                response.raise_for_status()
+                return response
+            except requests.RequestException as exc:
+                if attempt < 2:
+                    wait_time = 2 ** attempt
+                    time.sleep(wait_time)
+                else:
+                    errors.append(f"{url}: {exc}")
     raise RuntimeError(f"Unable to load '{relative_path}'. {'; '.join(errors)}")
 
 
@@ -121,15 +131,33 @@ def _read_csv(resp: requests.Response, **kwargs) -> pd.DataFrame:
     return pd.read_csv(io.StringIO(resp.text), **kwargs)
 
 
-def _read_dta(resp: requests.Response) -> pd.DataFrame:
-    return pd.read_stata(io.BytesIO(resp.content), convert_categoricals=False)
+def _read_dta(resp: requests.Response) -> Tuple[pd.DataFrame, Path]:
+    content = resp.content
+    expected_size = int(resp.headers.get("Content-Length", 0))
+
+    # Save to temp file
+    temp_file = _CACHE_DIR / f"tmp_{uuid.uuid4().hex}.dta"
+    temp_file.write_bytes(content)
+
+    # Validate size
+    if expected_size > 0 and temp_file.stat().st_size != expected_size:
+        temp_file.unlink()
+        raise ValueError(f"Incomplete download: expected {expected_size} bytes, got {temp_file.stat().st_size} bytes")
+
+    # Validate readability
+    try:
+        df = pd.read_stata(temp_file, convert_categoricals=False)
+        return df, temp_file
+    except Exception as e:
+        temp_file.unlink()
+        raise ValueError(f"Downloaded file is corrupted: {e}")
 
 
 def _read_csv_primary(relative_path: str, **kwargs) -> pd.DataFrame:
     return _read_csv(_fetch_primary(relative_path), **kwargs)
 
 
-def _read_dta_primary(relative_path: str) -> pd.DataFrame:
+def _read_dta_primary(relative_path: str) -> Tuple[pd.DataFrame, Path]:
     return _read_dta(_fetch_primary(relative_path))
 
 
@@ -173,9 +201,9 @@ def _cache_versions() -> List[str]:
 
 
 def _default_local_gmd_path() -> Optional[Path]:
-    dta = _CACHE_DIR / "GMD.dta"
-    if dta.exists():
-        return dta
+    versions = _cache_versions()
+    if versions:
+        return _CACHE_DIR / f"GMD_{versions[0]}.dta"
     return None
 
 
@@ -209,7 +237,9 @@ def _bib_df() -> pd.DataFrame:
 
 @lru_cache(maxsize=1)
 def _country_df() -> pd.DataFrame:
-    return _read_dta_primary("helpers/countrylist.dta")
+    df, temp_file = _read_dta_primary("helpers/countrylist.dta")
+    temp_file.unlink(missing_ok=True)
+    return df
 
 
 def _format_bibtex_for_print(entry: str) -> str:
@@ -330,13 +360,16 @@ def _strip_source_prefix_cols(df: pd.DataFrame, source: str) -> List[str]:
 def get_available_versions() -> List[str]:
     try:
         return _versions_df()["versions"].astype(str).tolist()
-    except RuntimeError:
+    except RuntimeError as e:
         versions = _cache_versions()
         if versions:
             return versions
         if _default_local_gmd_path() is not None:
             return ["local"]
-        raise
+        raise GMDCommandError(
+            f"Unable to access version information. {str(e)}",
+            code=498
+        ) from e
 
 
 def get_current_version() -> str:
@@ -345,6 +378,20 @@ def get_current_version() -> str:
 
 def list_variables() -> None:
     _print_var_table(_varlist_df())
+
+
+def _coerce_flag(value: Union[bool, str, None]) -> bool:
+    """Convert bool/str flag to bool. Accepts: True/'yes'/'true'/'1' -> True; False/'no'/'false'/'0' -> False."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    s = str(value).lower().strip()
+    if s in ("yes", "true", "1", "on"):
+        return True
+    if s in ("no", "false", "0", "off"):
+        return False
+    raise GMDCommandError(f"Invalid flag value: {value}. Use True/False or 'yes'/'no'.", code=198)
 
 
 def list_countries() -> None:
@@ -362,6 +409,8 @@ def gmd(
     print_option: Optional[str] = None,
     network: Optional[str] = None,
     fast: Optional[Union[str, bool]] = None,
+    start_year: Optional[int] = None,
+    end_year: Optional[int] = None,
     **kwargs,
 ) -> Optional[pd.DataFrame]:
     if "print" in kwargs:
@@ -370,6 +419,31 @@ def gmd(
         print_option = kwargs.pop("print")
     if kwargs:
         raise TypeError(f"Unexpected keyword argument(s): {', '.join(kwargs.keys())}")
+
+    # Type check for country and variables parameters
+    if country is not None and not isinstance(country, (str, list)):
+        raise GMDCommandError(
+            f"country must be a string, list, or None, not {type(country).__name__}",
+            code=198
+        )
+    if variables is not None and not isinstance(variables, (str, list)):
+        raise GMDCommandError(
+            f"variables must be a string, list, or None, not {type(variables).__name__}",
+            code=198
+        )
+
+    # Coerce string flags to bool
+    raw = _coerce_flag(raw)
+    iso = _coerce_flag(iso)
+    fast = _coerce_flag(fast)
+
+    # Validate year parameters
+    if start_year is not None and not isinstance(start_year, int):
+        raise GMDCommandError("start_year must be an integer or None", code=198)
+    if end_year is not None and not isinstance(end_year, int):
+        raise GMDCommandError("end_year must be an integer or None", code=198)
+    if start_year is not None and end_year is not None and start_year > end_year:
+        raise GMDCommandError("start_year must be <= end_year", code=198)
 
     if iso:
         country = "list"
@@ -381,6 +455,15 @@ def gmd(
     anything_tokens = _tokens(variables)
     anything = " ".join(anything_tokens)
     word_count = len(anything_tokens)
+
+    if anything_tokens:
+        invalid = [v for v in anything_tokens if v not in VALID_VARIABLES]
+        if invalid:
+            raise GMDCommandError(
+                f"Unknown variable(s): {', '.join(invalid)}. "
+                f"Call list_variables() to see valid names.",
+                code=198,
+            )
 
     if isinstance(country, str):
         country_arg = country
@@ -532,7 +615,8 @@ def gmd(
         src_name = src_tokens[0]
 
         try:
-            src_df = _read_dta_primary(f"clean/combined/{src_name}.dta")
+            src_df, src_tmp = _read_dta_primary(f"clean/combined/{src_name}.dta")
+            src_tmp.unlink(missing_ok=True)
         except RuntimeError:
             # First load failed — try correcting the source name and retry
             try:
@@ -550,7 +634,8 @@ def gmd(
                 )
             src_name = str(source_list.loc[mask, "source_name"].iloc[0])
             try:
-                src_df = _read_dta_primary(f"clean/combined/{src_name}.dta")
+                src_df, src_tmp = _read_dta_primary(f"clean/combined/{src_name}.dta")
+                src_tmp.unlink(missing_ok=True)
             except RuntimeError:
                 _fail(
                     f"Unable to load data for source '{src_name}'.",
@@ -649,15 +734,15 @@ def gmd(
                 df = pd.read_stata(local_version, convert_categoricals=False)
             elif _is_fast_yes(fast):
                 try:
-                    df = _read_dta_primary(f"distribute/GMD_{selected_version}.dta")
+                    df, temp_file = _read_dta_primary(f"distribute/GMD_{selected_version}.dta")
                 except RuntimeError:
                     _fail_with_issue("the data")
-                df.to_stata(local_version, write_index=False)
-                df.to_stata(_CACHE_DIR / "GMD.dta", write_index=False)
+                shutil.move(str(temp_file), str(local_version))
                 _emit(f"GMD dataset loaded and saved locally in {_CACHE_DIR}.")
             else:
                 try:
-                    df = _read_dta_primary(f"distribute/GMD_{selected_version}.dta")
+                    df, temp_file = _read_dta_primary(f"distribute/GMD_{selected_version}.dta")
+                    temp_file.unlink(missing_ok=True)
                 except RuntimeError:
                     _fail_with_issue("the data")
         else:
@@ -737,5 +822,14 @@ def gmd(
         fast=fast,
         saved_gmd=saved_gmd,
     )
+
+    # Filter by year range if specified
+    if (start_year is not None or end_year is not None) and df is not None:
+        if "year" in df.columns:
+            if start_year is not None:
+                df = df[df["year"] >= start_year]
+            if end_year is not None:
+                df = df[df["year"] <= end_year]
+            df = df.reset_index(drop=True)
 
     return df
