@@ -133,7 +133,8 @@ def _read_csv(resp: requests.Response, **kwargs) -> pd.DataFrame:
 
 def _read_dta(resp: requests.Response) -> Tuple[pd.DataFrame, Path]:
     content = resp.content
-    expected_size = int(resp.headers.get("Content-Length", 0))
+    headers = getattr(resp, "headers", {}) or {}
+    expected_size = int(headers.get("Content-Length", 0))
 
     # Save to temp file
     temp_file = _CACHE_DIR / f"tmp_{uuid.uuid4().hex}.dta"
@@ -457,6 +458,13 @@ def gmd(
     word_count = len(anything_tokens)
 
     if anything_tokens:
+        id_lower = {c.lower() for c in _ID_COLS}
+        id_vars = [v for v in anything_tokens if v.lower() in id_lower]
+        if id_vars:
+            raise GMDCommandError(
+                f"{', '.join(id_vars)} is an identifying variable loaded in the dataset, specify common variables",
+                code=498,
+            )
         invalid = [v for v in anything_tokens if v not in VALID_VARIABLES]
         if invalid:
             raise GMDCommandError(
