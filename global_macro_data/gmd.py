@@ -297,6 +297,7 @@ def _summary(
     sources: Optional[str],
     fast: Optional[Union[str, bool]],
     saved_gmd: bool,
+    fast_unset: bool = False,
 ) -> None:
     n_vars = len(df.columns)
     for ident in _ID_COLS:
@@ -317,7 +318,7 @@ def _summary(
     _emit('For BibTeX: gmd(cite="lehbib2025gmd")  |  For APA: gmd(print_option="Stata")')
     _emit("")
 
-    if (fast is None or str(fast).strip() == "") and (not saved_gmd) and (not raw):
+    if fast_unset and (not saved_gmd) and (not raw):
         _emit(
             f"To save the data locally for faster reloading, use: "
             f'gmd(version="{selected_version}", fast="yes")'
@@ -436,6 +437,7 @@ def gmd(
     # Coerce string flags to bool
     raw = _coerce_flag(raw)
     iso = _coerce_flag(iso)
+    fast_unset = fast is None
     fast = _coerce_flag(fast)
 
     # Validate year parameters
@@ -461,15 +463,15 @@ def gmd(
         id_lower = {c.lower() for c in _ID_COLS}
         id_vars = [v for v in anything_tokens if v.lower() in id_lower]
         if id_vars:
-            raise GMDCommandError(
+            _fail(
                 f"{', '.join(id_vars)} is an identifying variable loaded in the dataset, specify common variables",
+                *_VARS_HINTS,
                 code=498,
             )
         invalid = [v for v in anything_tokens if v not in VALID_VARIABLES]
         if invalid:
             raise GMDCommandError(
-                f"Unknown variable(s): {', '.join(invalid)}. "
-                f"Call list_variables() to see valid names.",
+                "Specified variable is not valid.",
                 code=198,
             )
 
@@ -829,6 +831,7 @@ def gmd(
         sources=sources,
         fast=fast,
         saved_gmd=saved_gmd,
+        fast_unset=fast_unset,
     )
 
     # Filter by year range if specified
