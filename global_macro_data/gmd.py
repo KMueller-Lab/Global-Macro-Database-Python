@@ -459,13 +459,13 @@ def gmd(
     anything = " ".join(anything_tokens)
     word_count = len(anything_tokens)
 
-    if anything_tokens:
+    if anything_tokens and sources is None:
         id_lower = {c.lower() for c in _ID_COLS}
         id_vars = [v for v in anything_tokens if v.lower() in id_lower]
         if id_vars:
             _fail(
-                f"{', '.join(id_vars)} is an identifying variable loaded in the dataset, specify common variables",
                 *_VARS_HINTS,
+                f"{', '.join(id_vars)} is an identifying variable loaded in the dataset, specify common variables",
                 code=498,
             )
         invalid = [v for v in anything_tokens if v not in VALID_VARIABLES]
