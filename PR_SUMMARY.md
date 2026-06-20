@@ -415,7 +415,62 @@ steps:
 
 ---
 
-#### 6j. setup.py author 属性 ⚠️ **未修改**
+#### 6j. 全文件下载瓶颈 ❌ **未修复（架构限制）**
+
+**问题：** 即使对最窄的查询也下载完整 21 MB .dta 文件
+
+```python
+>>> df = gmd(country="USA", variables="rGDP")
+# 下载完整 21 MB GMD.dta（包含所有国家、所有变量）
+# 实际需要：USA × rGDP （仅几 KB）
+# 浪费：99.99% 的数据
+
+# 性能数据：Agent 测得 ~16 秒每次查询（一个国家×一个变量）
+```
+
+**修复状态：** ❌ **未修复**
+
+**原因：** 这需要后端 API 支持，不是 Python 包的问题
+- ❌ 后端无 byte-range 支持
+- ❌ 无列式下载端点
+- ❌ 无 per-variable 端点
+
+**解决方案：** 需要上游改进，建议的优化方向：
+
+1. **Parquet 格式** （推荐）
+   - 支持列式读取（只读需要的变量）
+   - 支持分区存储（按国家/年份分片）
+   - 支持行过滤（byte-range 下载）
+   - 文件大小通常比 .dta 小 50-70%
+
+   ```python
+   # 理想的未来用法（需后端支持）
+   df = gmd(country="USA", variables="rGDP")  # 仅下载相关列
+   # 预期：< 100 KB 下载 (vs 21 MB)，< 2 秒 (vs 16 秒)
+   ```
+
+2. **Per-variable endpoints**
+   ```
+   distribute/rGDP_2026_03.parquet  （仅 rGDP 变量）
+   distribute/country_2026_03.parquet  （仅国家标识）
+   ```
+
+3. **Compressed CSV** 作为中间方案
+   ```
+   distribute/GMD_2026_03.csv.gz
+   # 简单实现，文件体积减少 70-80%，但仍需下载全部数据
+   ```
+
+**Python 包端可做的改进（未来工作）：**
+- 添加流式读取支持（不加载全表到内存）
+- 按分块下载 + 在线过滤
+- 支持多格式（.dta/.csv/.parquet）
+
+**涉及 commit：** 无（需后端支持）
+
+---
+
+#### 6k. setup.py author 属性 ⚠️ **未修改**
 
 **问题：** author="Yangbo Wang" 与包的实际作者不一致
 ```python
@@ -463,9 +518,10 @@ author="Yangbo Wang (Python package maintainer)",
 | 6g | VALID_VARIABLES | P2 | ✅ 完全修 | gmd.py:471-476 | 7d294b4,a8b55f1 |
 | 6h | 版本下界 | P2 | ✅ 完全修 | setup.py:13 | 195cadf |
 | 6i | CI 矩阵 | P2 | ✅ 完全修 | .github/workflows/test.yml | ec94637,69a3368 |
-| 6j | author | P2 | ⚠️ 未修 | setup.py:14 | — |
+| 6j | 全文件下载瓶颈 | P2 | ❌ 架构限制 | — | — |
+| 6k | author | P2 | ⚠️ 未修 | setup.py:14 | — |
 
-**总计修复率：** 93.3% (14/15)
+**总计修复率：** 92.9% (13/14 代码问题已修，1 项架构限制)
 
 ---
 
