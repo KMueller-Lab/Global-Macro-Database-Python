@@ -10,7 +10,7 @@ setup(
     version="2.0.0",
     packages=find_packages(),
     package_data={},
-    install_requires=["requests", "pandas"],
+    install_requires=["requests>=2.20.0", "pandas>=1.0.0"],
     author="Yangbo Wang",
     author_email="wangyangbo@ruc.edu.cn",
     license="MIT",

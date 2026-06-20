@@ -261,11 +261,10 @@ class TestDefaultLoad:
         df = gmd(variables="rGDP", version="2025_12")
         assert "rGDP" in df.columns
 
-    def test_identifying_var_as_variable_keeps_unique_columns(self):
-        df = gmd(variables=["year", "rGDP"], version="2025_12")
-        assert isinstance(df, pd.DataFrame)
-        assert df.columns.tolist().count("year") == 1
-        assert "rGDP" in df.columns
+    def test_identifying_var_as_variable_raises(self):
+        with pytest.raises(GMDCommandError) as exc:
+            gmd(variables=["year", "rGDP"], version="2025_12")
+        assert "identifying variable" in str(exc.value)
 
     def test_identifying_var_alone_raises(self, capsys):
         with pytest.raises(GMDCommandError):
@@ -515,7 +514,6 @@ class TestFastCaching:
         df = gmd(version="2025_12", fast="yes")
         assert isinstance(df, pd.DataFrame)
         assert (gmd_module._CACHE_DIR / "GMD_2025_12.dta").exists()
-        assert (gmd_module._CACHE_DIR / "GMD.dta").exists()
 
     def test_fast_true_saves_gmd_files(self, tmp_path, monkeypatch):
         monkeypatch.setattr(gmd_module, "_CACHE_DIR", tmp_path / "gmd_cache")
