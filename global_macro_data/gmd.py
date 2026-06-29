@@ -378,6 +378,21 @@ def gmd(
     elif vars is False:
         vars = None
 
+    # [#3] Treat the list/current/load keywords case-insensitively (consistent with R).
+    # Only normalize a string arg when it *is* one of these keywords; real version
+    # numbers / source names / cite keys are left unchanged.
+    def _kw(v, words):
+        return v.lower() if isinstance(v, str) and v.lower() in words else v
+    # [#4] Trim surrounding whitespace on the version value so " 2026_03 " (and a
+    # padded keyword like " list ") works. Country/variable tokens are already
+    # trimmed via _tokens().
+    if isinstance(version, str):
+        version = version.strip()
+    version = _kw(version, {"list", "current"})
+    sources = _kw(sources, {"load", "list"})
+    cite = _kw(cite, {"load"})
+    vars = _kw(vars, {"load", "list"})
+
     anything_tokens = _tokens(variables)
     anything = " ".join(anything_tokens)
     word_count = len(anything_tokens)
@@ -574,8 +589,7 @@ def gmd(
                 return out
 
             avail = _strip_source_prefix_cols(src_df, src_name)
-            _emit(f"This source doesn't have data on {anything}. It has data on {' '.join(avail)}.")
-            return None
+            _fail(f"This source doesn't have data on {anything}. It has data on {' '.join(avail)}.")
 
         return src_df
 
@@ -667,13 +681,25 @@ def gmd(
         raise GMDCommandError("No data loaded", code=498)
 
     if anything != "" and not raw:
-        invalid_vars = [var for var in anything_tokens if var not in df.columns]
+        # Match variable names case-insensitively and normalize to the dataset's
+        # canonical casing (e.g. "rgdp" -> "rGDP"), consistent with how country
+        # codes and source names are already handled.
+        _col_by_lower = {str(col).lower(): str(col) for col in df.columns}
+        _canonical: List[str] = []
+        invalid_vars = []
+        for var in anything_tokens:
+            actual = _col_by_lower.get(var.lower())
+            if actual is None:
+                invalid_vars.append(var)
+            else:
+                _canonical.append(actual)
         if invalid_vars:
             if len(invalid_vars) == 1:
                 _emit(f"{invalid_vars[0]} is not a valid variable code")
             else:
                 _emit(f"{' '.join(invalid_vars)} are not valid variable codes")
             _fail(*_VARS_HINTS, code=498)
+        anything_tokens = _canonical
 
         keep_cols = list(dict.fromkeys(col for col in list(_ID_COLS) + anything_tokens if col in df.columns))
         df = df.loc[:, keep_cols].copy()
