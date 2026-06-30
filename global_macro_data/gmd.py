@@ -574,8 +574,12 @@ def gmd(
                 )
 
         if anything != "":
-            src_col = f"{src_name}_{anything}"
-            if src_col in src_df.columns:
+            # Match the variable name case-insensitively against the source's
+            # columns and resolve to the dataset's canonical casing (e.g.
+            # "rgdp" -> "PWT_rGDP"), consistent with the main dataset path.
+            _col_by_lower = {str(col).lower(): str(col) for col in src_df.columns}
+            src_col = _col_by_lower.get(f"{src_name}_{anything}".lower())
+            if src_col is not None:
                 keep_cols: List[str] = [col for col in ["ISO3", "year", src_col] if col in src_df.columns]
                 if "countryname" in src_df.columns:
                     keep_cols.append("countryname")

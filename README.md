@@ -91,6 +91,19 @@ The `gmd()` function supports the following options:
 | `fast` | `"yes"` or `True` | Cache data locally for faster reloading |
 | `network` | `"yes"` | Override network detection |
 
+Input handling notes (consistent with the R and Stata packages):
+
+- **Variable names are case-insensitive** and normalized to the dataset's
+  canonical casing, e.g. `variables="rgdp"` returns the `rGDP` column. This
+  applies to both the main dataset and the `sources=` path.
+- **Country codes are case-insensitive**, e.g. `country="usa"` is treated as `USA`.
+- **The `list` / `current` / `load` keywords are case-insensitive**, e.g.
+  `version="LIST"`, `sources="LOAD"`, `vars="LIST"`, `cite="LOAD"`.
+- **Citation and `print_option` keys are case-insensitive**, e.g. `cite="gmd"`,
+  `print_option="stata"`.
+- **Whitespace around `version` is trimmed**, e.g. `version=" 2025_12 "`.
+- `version="current"` prints the latest version label *and* returns that dataset.
+
 Helper functions are also available:
 
 - `get_available_versions()` -- list all data vintages

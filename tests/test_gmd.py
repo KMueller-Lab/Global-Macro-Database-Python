@@ -477,11 +477,17 @@ class TestSources:
         assert isinstance(df, pd.DataFrame)
         assert len(df) > 0
 
-    def test_sources_invalid_variable_exits_gracefully(self, capsys):
-        result = gmd(sources="IMF_IFS", variables="NOT_A_VAR", version="2025_12")
+    def test_sources_invalid_variable_raises(self, capsys):
+        with pytest.raises(GMDCommandError):
+            gmd(sources="IMF_IFS", variables="NOT_A_VAR", version="2025_12")
         out = capsys.readouterr().out
-        assert result is None
         assert "This source doesn't have data on NOT_A_VAR." in out
+
+    def test_sources_variable_case_insensitive(self):
+        df = gmd(sources="IMF_IFS", variables="rgdp", country="USA", version="2025_12")
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) > 0
+        assert "IMF_IFS_rGDP" in df.columns
 
     def test_sources_invalid_country_returns_empty(self):
         df = gmd(sources="IMF_IFS", variables="rGDP", country="XXX", version="2025_12")
