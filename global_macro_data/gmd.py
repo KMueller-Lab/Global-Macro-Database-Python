@@ -538,7 +538,13 @@ def gmd(
     if sources is not None and str(sources) != "":
 
         src_name = str(sources).strip()
+        cs_col_prefix = None
         if len(src_name) == 7 and src_name.startswith("CS"):
+            # CS-aliased sources keep the ORIGINAL alias prefix on their data
+            # columns (e.g. "CS1_M3_GDP"), while the .dta file/source name is
+            # normalized (e.g. "ARG_1"). Remember the column prefix so variable
+            # selection resolves against the real column names.
+            cs_col_prefix = src_name.split("_")[0]
             src_name = _normalize_source_name(src_name)
 
         src_tokens = _tokens(src_name)
@@ -578,7 +584,7 @@ def gmd(
             # columns and resolve to the dataset's canonical casing (e.g.
             # "rgdp" -> "PWT_rGDP"), consistent with the main dataset path.
             _col_by_lower = {str(col).lower(): str(col) for col in src_df.columns}
-            src_col = _col_by_lower.get(f"{src_name}_{anything}".lower())
+            src_col = _col_by_lower.get(f"{cs_col_prefix or src_name}_{anything}".lower())
             if src_col is not None:
                 keep_cols: List[str] = [col for col in ["ISO3", "year", src_col] if col in src_df.columns]
                 if "countryname" in src_df.columns:
@@ -592,7 +598,7 @@ def gmd(
                     out = out.loc[out["ISO3"].astype(str).str.upper() == target]
                 return out
 
-            avail = _strip_source_prefix_cols(src_df, src_name)
+            avail = _strip_source_prefix_cols(src_df, cs_col_prefix or src_name)
             _fail(f"This source doesn't have data on {anything}. It has data on {' '.join(avail)}.")
 
         return src_df
@@ -684,6 +690,11 @@ def gmd(
     if df is None:
         raise GMDCommandError("No data loaded", code=498)
 
+    # Valid country codes come from the FULL loaded panel, captured BEFORE the
+    # variable-missingness row filter below, so a valid country that merely lacks
+    # the requested variable is not later misreported as an invalid ISO3 code.
+    _valid_iso = set(df["ISO3"].astype(str).str.upper()) if "ISO3" in df.columns else set()
+
     if anything != "" and not raw:
         # Match variable names case-insensitively and normalize to the dataset's
         # canonical casing (e.g. "rgdp" -> "rGDP"), consistent with how country
@@ -739,8 +750,11 @@ def gmd(
                 one = iso_series == iso_code
                 if one.any():
                     keep_mask = keep_mask | one
-                else:
+                elif iso_code not in _valid_iso:
                     invalid.append(iso_code)
+                # else: a valid country that has no rows left after the variable-
+                # missingness filter above -> keep silently (contributes 0 rows)
+                # instead of being falsely flagged as an invalid ISO3 code.
 
             if invalid:
                 inv = " ".join(invalid)
