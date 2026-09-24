@@ -177,6 +177,11 @@ def _tokens(value: Union[str, Sequence[str], None]) -> List[str]:
     if isinstance(value, str):
         bits = value.replace(",", " ").split()
         return [bit.strip() for bit in bits if bit.strip()]
+    if not isinstance(value, (list, tuple)):
+        raise GMDCommandError(
+            f"Expected a string or sequence of strings, got {type(value).__name__}.",
+            code=198,
+        )
     out: List[str] = []
     for item in value:
         if isinstance(item, str):
