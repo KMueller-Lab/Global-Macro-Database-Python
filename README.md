@@ -81,15 +81,22 @@ The `gmd()` function supports the following options:
 | Parameter | Values | Description |
 |-----------|--------|-------------|
 | `version` | `"YYYY_MM"`, `"current"`, `"list"` | Select data vintage |
-| `country` | ISO3 code(s), `"load"`, `"list"` | Filter by country |
+| `country` | ISO3 code(s), `"load"`, `"list"` | Filter by country (string or list of strings) |
 | `variables` | Variable code(s) | Select specific variables |
-| `raw` | `True` / `False` | Load raw source-level data |
+| `start_year` | Integer year | Keep only rows with `year >= start_year` |
+| `end_year` | Integer year | Keep only rows with `year <= end_year` |
+| `raw` | bool or `yes`/`no`/`true`/`false`/`on`/`off`/`1`/`0` | Load raw source-level data |
 | `vars` | `"load"`, `"list"` | Load or display variable definitions |
 | `sources` | Source name, `"load"`, `"list"` | Query specific data sources |
 | `cite` | Source key, `"load"` | Retrieve BibTeX citations |
 | `print_option` | `"GMD"`, `"Stata"` | Print APA-style citations |
-| `fast` | `"yes"` or `True` | Cache data locally for faster reloading |
+| `fast` | bool or `yes`/`no`/`true`/`false`/`on`/`off`/`1`/`0` | Cache data locally for faster reloading |
+| `iso` | bool or `yes`/`no`/`true`/`false`/`on`/`off`/`1`/`0` | Alias for `country="list"` |
 | `network` | `"yes"` | Override network detection |
+
+`raw`, `fast`, and `iso` accept Python booleans or the boolean-like strings listed
+above; any other value (e.g. `raw="maybe"`) raises `GMDCommandError` instead of
+being silently treated as truthy.
 
 Helper functions are also available:
 

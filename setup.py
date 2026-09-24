@@ -10,9 +10,9 @@ setup(
     version="2.0.0",
     packages=find_packages(),
     package_data={},
-    install_requires=["requests", "pandas"],
-    author="Yangbo Wang",
-    author_email="wangyangbo@ruc.edu.cn",
+    install_requires=["requests>=2.20.0", "pandas>=1.3.0"],
+    author="Karsten Mueller, Chenzi Xu, Mohamed Lehbib, Ziliang Chen",
+    author_email="kmueller@nus.edu.sg",
     license="MIT",
     description=(
         "Global Macro Database by Karsten Mueller, Chenzi Xu, "
