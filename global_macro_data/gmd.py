@@ -302,6 +302,25 @@ def _atomic_to_stata(df: pd.DataFrame, path: Path) -> None:
             except OSError:
                 pass
 
+
+def _atomic_write_bytes(data: bytes, path: Path) -> None:
+    """Write raw downloaded bytes to the cache atomically (same tmp+replace
+    pattern as _atomic_to_stata). Caching the exact response bytes, instead of
+    re-serializing a parsed DataFrame back to .dta, avoids a lossy round trip
+    through pandas and skips a redundant encode of the whole dataset."""
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_bytes(data)
+        if not tmp.exists() or tmp.stat().st_size == 0:
+            raise RuntimeError(f"Refusing to cache empty file for {path.name}")
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
 @lru_cache(maxsize=1)
 def _versions_df() -> pd.DataFrame:
     df = _read_csv_primary("helpers/versions.csv")
@@ -809,11 +828,12 @@ def gmd(
                 df = pd.read_stata(local_version, convert_categoricals=False)
             elif fast:
                 try:
-                    df = _read_dta_primary(f"distribute/GMD_{selected_version}.dta")
+                    resp = _fetch_first(f"distribute/GMD_{selected_version}.dta")
+                    df = _read_dta(resp)
                 except RuntimeError:
                     _fail_missing_version_data(selected_version)
-                _atomic_to_stata(df, local_version)
-                _atomic_to_stata(df, _CACHE_DIR / "GMD.dta")
+                _atomic_write_bytes(resp.content, local_version)
+                _atomic_write_bytes(resp.content, _CACHE_DIR / "GMD.dta")
                 _emit(f"GMD dataset loaded and saved locally in {_CACHE_DIR}.")
             else:
                 try:
