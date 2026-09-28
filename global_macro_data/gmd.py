@@ -688,7 +688,13 @@ def gmd(
     if sources is not None and str(sources) != "":
 
         src_name = str(sources).strip()
+        cs_col_prefix = None
         if len(src_name) == 7 and src_name.startswith("CS"):
+            # CS-aliased sources keep the original alias prefix on their data
+            # columns (e.g. "CS1_M3_GDP") even though the .dta file/source name
+            # is normalized (e.g. "ARG_1"). Remember the alias prefix so the
+            # variable column lookup below resolves against the real columns.
+            cs_col_prefix = src_name.split("_")[0]
             src_name = _normalize_source_name(src_name)
 
         src_tokens = _tokens(src_name)
@@ -724,7 +730,7 @@ def gmd(
                 )
 
         if anything != "":
-            src_col = f"{src_name}_{anything}"
+            src_col = f"{cs_col_prefix or src_name}_{anything}"
             if src_col in src_df.columns:
                 keep_cols: List[str] = [col for col in ["ISO3", "year", src_col] if col in src_df.columns]
                 if "countryname" in src_df.columns:
@@ -738,7 +744,7 @@ def gmd(
                     out = out.loc[out["ISO3"].astype(str).str.upper() == target]
                 return out
 
-            avail = _strip_source_prefix_cols(src_df, src_name)
+            avail = _strip_source_prefix_cols(src_df, cs_col_prefix or src_name)
             _fail(f"This source doesn't have data on {anything}. It has data on {' '.join(avail)}.")
 
         return src_df

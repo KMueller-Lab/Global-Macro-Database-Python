@@ -661,6 +661,16 @@ class TestSources:
         assert isinstance(df, pd.DataFrame)
         assert len(df) > 0
 
+    def test_sources_cs_alias_with_variable(self):
+        """CS-aliased sources keep the original alias prefix on their data
+        columns (e.g. "CS1_M3_GDP") even though the source name is normalized
+        to "ARG_1" for the file lookup. Requesting a variable must resolve
+        against the real column, not a column built from the normalized name."""
+        df = gmd(sources="CS1_ARG", variables="M3_GDP", version="2025_12")
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) > 0
+        assert "CS1_M3_GDP" in df.columns
+
     def test_sources_invalid_name_raises(self, capsys):
         with pytest.raises(GMDCommandError):
             gmd(sources="TOTALLY_FAKE_SOURCE", version="2025_12")
