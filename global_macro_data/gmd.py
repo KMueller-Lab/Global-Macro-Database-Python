@@ -718,9 +718,7 @@ def gmd(
             try:
                 source_list = _source_list_df()
             except RuntimeError:
-                _emit(f"Unable to access source list. Please raise an issue at {_ISSUES_URL}")
-                src_df = pd.DataFrame()
-                return src_df
+                _fail_with_issue("source list")
             mask = source_list["source_name"].astype(str).str.lower() == src_name.lower()
             if not mask.any():
                 _fail(

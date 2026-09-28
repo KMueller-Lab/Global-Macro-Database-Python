@@ -634,9 +634,9 @@ class TestSources:
         assert len(df) > 0
 
     def test_sources_invalid_variable_exits_gracefully(self, capsys):
-        result = gmd(sources="IMF_IFS", variables="NOT_A_VAR", version="2025_12")
+        with pytest.raises(GMDCommandError):
+            gmd(sources="IMF_IFS", variables="NOT_A_VAR", version="2025_12")
         out = capsys.readouterr().out
-        assert result is None
         assert "This source doesn't have data on NOT_A_VAR." in out
 
     def test_sources_invalid_country_returns_empty(self):
