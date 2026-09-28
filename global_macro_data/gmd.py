@@ -652,11 +652,15 @@ def gmd(
         key = cite_tokens[0]
 
         bib = _bib_df()
-        if "source_name" not in bib.columns:
+        # The bib table's source-name column has been served as either
+        # "source_name" or "source" depending on the data release; accept both
+        # so a server-side rename doesn't silently break every citation lookup.
+        bib_key_col = next((c for c in ("source_name", "source") if c in bib.columns), None)
+        if bib_key_col is None:
             _fail("source_name not found", code=111)
         if "citation" not in bib.columns:
             _fail("citation not found", code=111)
-        mask = bib["source_name"].astype(str).str.lower() == key.lower()
+        mask = bib[bib_key_col].astype(str).str.lower() == key.lower()
         if not mask.any():
             _fail(
                 f"Source '{key}' does not exist.",
