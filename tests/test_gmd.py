@@ -326,6 +326,18 @@ class TestCite:
         with pytest.raises(GMDCommandError, match="Only one citation"):
             gmd(cite="A B")
 
+    def test_cite_works_with_source_column_instead_of_source_name(self, monkeypatch, capsys):
+        """The bib table has been served with either a "source_name" or a
+        "source" column depending on the data release. cite= must keep
+        working under either schema instead of only supporting the name the
+        code happened to be written against."""
+        renamed = gmd(cite="load").rename(columns={"source_name": "source"})
+        monkeypatch.setattr(gmd_module, "_bib_df", lambda: renamed)
+        result = gmd(cite="GMD")
+        out = capsys.readouterr().out
+        assert result is None
+        assert "@techreport" in out
+
 
 # ---------------------------------------------------------------------------
 # Default load and variable filtering
