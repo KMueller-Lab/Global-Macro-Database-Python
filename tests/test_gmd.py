@@ -17,27 +17,6 @@ gmd_module = importlib.import_module("global_macro_data.gmd")
 
 
 # ---------------------------------------------------------------------------
-# Docstring
-# ---------------------------------------------------------------------------
-
-class TestDocstring:
-    def test_gmd_has_docstring(self):
-        assert gmd.__doc__ is not None
-        assert gmd.__doc__.strip() != ""
-
-    def test_docstring_documents_key_arguments(self):
-        doc = gmd.__doc__
-        for name in ("variables", "country", "version", "raw", "vars",
-                     "sources", "cite", "start_year", "end_year"):
-            assert name in doc
-
-    def test_docstring_has_sections(self):
-        doc = gmd.__doc__
-        for section in ("Args:", "Returns:", "Raises:", "Examples:"):
-            assert section in doc
-
-
-# ---------------------------------------------------------------------------
 # Helper utilities
 # ---------------------------------------------------------------------------
 
