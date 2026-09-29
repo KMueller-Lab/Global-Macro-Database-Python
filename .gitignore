@@ -25,3 +25,7 @@ Thumbs.db
 
 # Keep egg-info for package metadata
 !global_macro_data.egg-info/
+
+# Local-only Claude Code context
+CLAUDE.md
+.codegraph/
