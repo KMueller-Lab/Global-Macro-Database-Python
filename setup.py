@@ -13,7 +13,7 @@ setup(
     install_requires=["requests>=2.20.0", "pandas>=1.3.0"],
     author="Karsten Mueller, Chenzi Xu, Mohamed Lehbib, Ziliang Chen",
     author_email="kmueller@nus.edu.sg",
-    license="MIT",
+    license="Global Macro Database Non-Commercial License",
     description=(
         "Global Macro Database by Karsten Mueller, Chenzi Xu, "
         "Mohamed Lehbib and Ziliang Chen (2025)"
