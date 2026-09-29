@@ -6,7 +6,7 @@ README = Path("README.md")
 long_description = README.read_text(encoding="utf-8") if README.exists() else "Global Macro Data package"
 
 setup(
-    name="GMD py",
+    name="gmd-py",
     version="1.2.0",
     packages=find_packages(),
     package_data={},
