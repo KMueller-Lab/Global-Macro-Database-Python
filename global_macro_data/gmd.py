@@ -12,7 +12,7 @@ from typing import List, Optional, Sequence, Union
 import pandas as pd
 import requests
 
-PACKAGE_VERSION = "2.0.1"
+PACKAGE_VERSION = "1.2.0"
 
 _DATA_BASES = (
     "https://gmd-releases.s3.ap-southeast-2.amazonaws.com/data",
