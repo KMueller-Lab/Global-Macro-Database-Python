@@ -509,6 +509,103 @@ def gmd(
     end_year: Optional[Union[int, str]] = None,
     **kwargs,
 ) -> Optional[pd.DataFrame]:
+    """Fetch macroeconomic data from the Global Macro Database.
+
+    This is the single entry point of the package. Called with no arguments it
+    downloads the full latest dataset and returns it as a pandas ``DataFrame``.
+    The keyword arguments narrow the data down (by variable, country, year, or
+    data vintage) or switch the function into one of its helper/metadata modes
+    (listing versions, variables, countries, sources, or citations).
+
+    Data is fetched from a remote release bucket (S3, with a GitHub mirror as
+    fallback) and can be cached locally under ``~/.global_macro_data`` when
+    ``fast`` is enabled. If the version information cannot be reached and a
+    local copy exists, that copy is loaded instead.
+
+    Args:
+        variables: One or more variable codes to keep, e.g. ``"rGDP"`` or
+            ``["rGDP", "infl", "unemp"]``. May also be given as a single
+            space- or comma-separated string (``"rGDP infl"``). Codes are
+            matched case-insensitively and returned in the dataset's canonical
+            casing. When omitted, all variables are returned. Use
+            ``vars="list"`` to see the available codes.
+        country: One or more ISO3 country codes to keep, e.g. ``"USA"`` or
+            ``["USA", "CHN"]`` (also accepts a space/comma string). The special
+            values ``"list"`` and ``"load"`` print or return the country table
+            instead of loading data. Codes are matched case-insensitively.
+        version: Data vintage to load, formatted ``"YYYY_MM"`` (e.g.
+            ``"2025_12"``). Use ``"current"`` to report the latest version and
+            ``"list"`` to print every available version. Surrounding whitespace
+            is ignored. Defaults to the latest version.
+        raw: If true, load raw source-level data for a single variable rather
+            than the harmonized series. Requires exactly one entry in
+            ``variables``. Accepts a bool or a boolean-like string
+            (``"yes"``/``"no"``/``"true"``/``"false"``/``"on"``/``"off"``/
+            ``"1"``/``"0"``); any other value raises ``GMDCommandError``.
+        iso: If true, shorthand for ``country="list"`` (print the country
+            table). Same boolean/string coercion as ``raw``.
+        vars: ``"list"`` prints the variable-definition table; ``"load"``
+            returns it as a ``DataFrame``. ``True`` is treated as ``"list"``.
+        sources: A source name to load that source's raw table, or ``"list"``/
+            ``"load"`` to print or return the list of available sources.
+            Combine with ``variables`` to keep a single column, and with
+            ``country`` to filter rows.
+        cite: A source key to print its BibTeX citation, or ``"load"`` to
+            return the full citation table as a ``DataFrame``.
+        print_option: ``"GMD"`` or ``"Stata"`` -- print the APA-style citation
+            for the database or the package and return ``None``. Also accepted
+            via the keyword ``print=`` (but not both at once).
+        network: Pass ``"yes"`` to force the fetch to proceed when automatic
+            network detection has failed.
+        fast: If true, persist the downloaded ``.dta`` locally so subsequent
+            calls reload from disk. Same boolean/string coercion as ``raw``.
+        start_year: Keep only rows with ``year >= start_year``.
+        end_year: Keep only rows with ``year <= end_year``.
+
+    Returns:
+        A pandas ``DataFrame`` with the requested data (or metadata table for
+        the ``load`` modes). Returns ``None`` for modes that only print output
+        -- ``version="list"``, ``vars="list"``, ``country="list"``,
+        ``sources="list"``, a ``cite`` lookup, and ``print_option``.
+
+    Raises:
+        GMDCommandError: On any invalid argument or data-access failure, e.g.
+            an unknown version, an invalid variable or country code,
+            ``start_year`` greater than ``end_year``, or being offline with no
+            local cache. The exception carries a numeric ``code`` and optional
+            ``data``.
+        TypeError: If an unexpected keyword argument is passed, or if both
+            ``print_option`` and ``print`` are given.
+
+    Examples:
+        Load the full latest dataset::
+
+            from global_macro_data import gmd
+            df = gmd()
+
+        Filter to specific countries and variables for one vintage::
+
+            df = gmd(
+                version="2025_12",
+                country=["USA", "CHN"],
+                variables=["rGDP", "infl", "unemp"],
+            )
+
+        Restrict the year range and cache the download locally::
+
+            df = gmd(variables="rGDP", start_year=1990, end_year=2020, fast=True)
+
+        Load raw source-level data for a single variable::
+
+            raw_rgdp = gmd(variables="rGDP", raw=True, version="2025_12")
+
+        Explore the available metadata::
+
+            gmd(version="list")     # print every data vintage
+            gmd(vars="list")        # print the variable definitions
+            var_df = gmd(vars="load")   # same table as a DataFrame
+            gmd(cite="GMD")         # print the BibTeX citation
+    """
     if "print" in kwargs:
         if print_option is not None:
             raise TypeError("Specify either print_option or print, not both.")
