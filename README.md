@@ -119,3 +119,7 @@ When using the Global Macro Database, please cite:
     number = {33714}
 }
 ```
+
+## Authors
+
+*   **[Riccardo Dal Cero](https://gravatar.com/fuzzyspeedilycbab8fc244)** (Leibniz Institute for Financial Research (SAFE)) - [dalcero@safe-frankfurt.de](mailto:dalcero@safe-frankfurt.de)
