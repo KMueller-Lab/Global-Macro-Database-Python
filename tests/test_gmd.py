@@ -181,6 +181,22 @@ class TestSortVersionsDf:
 # Version functions
 # ---------------------------------------------------------------------------
 
+class TestIsNewer:
+    def test_newer_remote_triggers_upgrade(self):
+        assert gmd_module._is_newer("2.1.0", "2.0.1")
+        assert gmd_module._is_newer("2.0.10", "2.0.9")
+
+    def test_same_or_older_remote_does_not(self):
+        # versions.csv carries one number shared with R and Stata; a Python
+        # release ahead of it must not ask users to "upgrade" to an older one.
+        assert not gmd_module._is_newer("2.0.1", "2.0.1")
+        assert not gmd_module._is_newer("2.0.0", "2.0.1")
+
+    def test_unparseable_does_not(self):
+        assert not gmd_module._is_newer("nan", "2.0.1")
+        assert not gmd_module._is_newer("", "2.0.1")
+
+
 class TestVersions:
     def test_get_available_versions_returns_nonempty_list(self):
         versions = get_available_versions()

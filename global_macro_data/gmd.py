@@ -12,7 +12,7 @@ from typing import List, Optional, Sequence, Union
 import pandas as pd
 import requests
 
-PACKAGE_VERSION = "2.0.0"
+PACKAGE_VERSION = "2.0.1"
 
 _DATA_BASES = (
     "https://gmd-releases.s3.ap-southeast-2.amazonaws.com/data",
@@ -40,6 +40,23 @@ _APA_PACKAGE = (
 
 _ISSUES_URL = "https://github.com/KMueller-Lab/Global-Macro-Database"
 _UPGRADE_MSG = "There is a new version of the package. Run: pip install --upgrade global-macro-data"
+
+
+def _is_newer(remote: str, local: str) -> bool:
+    """True if version string `remote` (e.g. "2.1.0") is newer than `local`.
+
+    versions.csv carries one package version shared by the Python, R and
+    Stata packages, so a mere difference must not trigger the upgrade
+    message: a Python release ahead of the shared number would otherwise
+    tell every user to "upgrade" to an older version. Unparseable values
+    never trigger it.
+    """
+    def parts(v: str):
+        return tuple(int(x) for x in str(v).strip().split("."))
+    try:
+        return parts(remote) > parts(local)
+    except ValueError:
+        return False
 _NETWORK_HINT = 'If you have active internet access, specify the option: gmd(network="yes")'
 _VARS_HINTS = (
     'To print the list of variables: gmd(vars="list")',
@@ -592,7 +609,7 @@ def gmd(
 
         if "version_package" in versions_df.columns:
             package_remote = str(versions_df.loc[0, "version_package"])
-            if package_remote != PACKAGE_VERSION:
+            if _is_newer(package_remote, PACKAGE_VERSION):
                 _emit(_UPGRADE_MSG)
 
         if version == "list":
@@ -626,7 +643,7 @@ def gmd(
             if "versions" in versions_gh.columns and "version_package" in versions_gh.columns:
                 versions_gh = _sort_versions_df(versions_gh)
                 package_remote = str(versions_gh.iloc[0]["version_package"])
-                if package_remote != PACKAGE_VERSION:
+                if _is_newer(package_remote, PACKAGE_VERSION):
                     _emit(_UPGRADE_MSG)
                     _emit(f"Please raise an issue if the update does not work at {_ISSUES_URL}")
         except RuntimeError:
