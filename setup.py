@@ -6,8 +6,8 @@ README = Path("README.md")
 long_description = README.read_text(encoding="utf-8") if README.exists() else "Global Macro Data package"
 
 setup(
-    name="gmd-py",
-    version="1.2.0",
+    name="global-macro-data",
+    version="2.0.1",
     packages=find_packages(),
     package_data={},
     install_requires=["requests>=2.20.0", "pandas>=1.3.0"],
