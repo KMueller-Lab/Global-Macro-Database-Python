@@ -131,17 +131,39 @@ class TestNormalizeSourceName:
     def test_cs_alias_rewrite(self):
         assert gmd_module._normalize_source_name("CS1_ARG") == "ARG_1"
 
-    def test_cs_alias_preserves_case(self):
-        assert gmd_module._normalize_source_name("CS1_arg") == "arg_1"
+    def test_cs_alias_two_digit_slot(self):
+        assert gmd_module._normalize_source_name("CS10_ITA") == "ITA_10"
+
+    def test_cs_alias_case_insensitive(self):
+        assert gmd_module._normalize_source_name("cs1_arg") == "ARG_1"
+        assert gmd_module._normalize_source_name("CS10_ita") == "ITA_10"
+
+    def test_file_name_passthrough(self):
+        assert gmd_module._normalize_source_name("ITA_10") == "ITA_10"
 
     def test_non_cs_passthrough(self):
         assert gmd_module._normalize_source_name("IMF_IFS") == "IMF_IFS"
+        assert gmd_module._normalize_source_name("CEPII") == "CEPII"
 
     def test_short_cs_passthrough(self):
         assert gmd_module._normalize_source_name("CS1") == "CS1"
 
     def test_whitespace_stripped(self):
         assert gmd_module._normalize_source_name("  IMF_IFS  ") == "IMF_IFS"
+
+
+class TestCsColPrefix:
+    def test_cs_alias_prefix(self):
+        assert gmd_module._cs_col_prefix("CS1_ARG") == "CS1"
+        assert gmd_module._cs_col_prefix("CS10_ITA") == "CS10"
+
+    def test_lowercase_alias_prefix(self):
+        assert gmd_module._cs_col_prefix("cs10_ita") == "CS10"
+
+    def test_non_alias_has_no_prefix(self):
+        assert gmd_module._cs_col_prefix("IMF_IFS") is None
+        assert gmd_module._cs_col_prefix("ITA_10") is None
+        assert gmd_module._cs_col_prefix("CS1_ARGX") is None
 
 
 class TestFormatBibtex:
@@ -686,6 +708,30 @@ class TestSources:
         assert isinstance(df, pd.DataFrame)
         assert len(df) > 0
         assert "CS1_M3_GDP" in df.columns
+
+    def test_sources_cs_alias_two_digit_slot(self):
+        df = gmd(sources="CS10_ITA", version="2025_12")
+        assert len(df) > 0
+        assert "CS10_CPI" in df.columns
+
+    def test_sources_cs_alias_lowercase(self):
+        df = gmd(sources="cs10_ita", version="2025_12")
+        assert "CS10_CPI" in df.columns
+
+    def test_sources_cs_file_name(self):
+        df = gmd(sources="ITA_10", version="2025_12")
+        assert "CS10_CPI" in df.columns
+
+    def test_sources_cs_alias_two_digit_slot_with_variable(self):
+        df = gmd(sources="CS10_ITA", variables="CPI", version="2025_12")
+        assert list(df.columns) == ["ISO3", "year", "CS10_CPI"]
+        assert len(df) > 0
+
+    def test_sources_cs_alias_invalid_variable_lists_stripped_names(self, capsys):
+        with pytest.raises(GMDCommandError):
+            gmd(sources="CS10_ITA", variables="NOT_A_VAR", version="2025_12")
+        out = capsys.readouterr().out
+        assert "It has data on CPI nGDP rGDP." in out
 
     def test_sources_invalid_name_raises(self, capsys):
         with pytest.raises(GMDCommandError):
