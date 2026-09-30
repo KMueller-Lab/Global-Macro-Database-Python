@@ -551,7 +551,7 @@ def gmd(
             values ``"list"`` and ``"load"`` print or return the country table
             instead of loading data. Codes are matched case-insensitively.
         version: Data vintage to load, formatted ``"YYYY_MM"`` (e.g.
-            ``"2025_12"``). Use ``"current"`` to report the latest version and
+            ``"2026_09"``). Use ``"current"`` to report the latest version and
             ``"list"`` to print every available version. Surrounding whitespace
             is ignored. Defaults to the latest version.
         raw: If true, load raw source-level data for a single variable rather
@@ -603,7 +603,7 @@ def gmd(
         Filter to specific countries and variables for one vintage::
 
             df = gmd(
-                version="2025_12",
+                version="2026_09",
                 country=["USA", "CHN"],
                 variables=["rGDP", "infl", "unemp"],
             )
@@ -614,7 +614,7 @@ def gmd(
 
         Load raw source-level data for a single variable::
 
-            raw_rgdp = gmd(variables="rGDP", raw=True, version="2025_12")
+            raw_rgdp = gmd(variables="rGDP", raw=True)
 
         Explore the available metadata::
 

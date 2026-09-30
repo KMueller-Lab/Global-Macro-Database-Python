@@ -51,17 +51,16 @@ from global_macro_data import gmd
 full_df = gmd()
 
 # Specific vintage
-df = gmd(version="2025_12")
+df = gmd(version="2026_09")
 
 # Filter countries and variables
 subset = gmd(
-    version="2025_12",
     country=["USA", "CHN"],
     variables=["rGDP", "infl", "unemp"],
 )
 
 # Raw source-level data for one variable
-raw_rgdp = gmd(variables="rGDP", raw=True, version="2025_12")
+raw_rgdp = gmd(variables="rGDP", raw=True)
 
 # Load helper tables
 varlist_df = gmd(vars="load")
