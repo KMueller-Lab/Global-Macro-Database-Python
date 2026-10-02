@@ -733,6 +733,15 @@ class TestSources:
         out = capsys.readouterr().out
         assert "It has data on CPI nGDP rGDP." in out
 
+    def test_sources_cs_alias_nonexistent_slot_raises(self, capsys):
+        """A CS alias with a slot that has no backing file must error rather
+        than silently resolving to anything. CS99_ITA normalizes to ITA_99,
+        which is not a known source, so the lookup fails cleanly."""
+        with pytest.raises(GMDCommandError):
+            gmd(sources="CS99_ITA", version="2025_12")
+        out = capsys.readouterr().out
+        assert "Invalid source name" in out
+
     def test_sources_invalid_name_raises(self, capsys):
         with pytest.raises(GMDCommandError):
             gmd(sources="TOTALLY_FAKE_SOURCE", version="2025_12")
