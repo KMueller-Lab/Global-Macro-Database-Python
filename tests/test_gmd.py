@@ -266,10 +266,13 @@ class TestVersions:
         assert isinstance(df, pd.DataFrame)
         assert len(df) > 0
 
-    def test_listed_version_with_missing_file_gives_clear_error(self, capsys, monkeypatch):
+    def test_listed_version_with_missing_file_gives_clear_error(self, capsys, tmp_path, monkeypatch):
         """A version listed in versions.csv whose .dta is unreachable must yield a
         clear 'data file ... could not be retrieved' message, not a bare
         'raise an issue' nor a raw RuntimeError."""
+        # Isolate from any real ~/.global_macro_data cache, otherwise a cached
+        # .dta is loaded directly and the unreachable-file path is never hit.
+        monkeypatch.setattr(gmd_module, "_CACHE_DIR", tmp_path / "empty")
         original = gmd_module._read_dta_primary
 
         def _fake_read_dta_primary(path):
@@ -398,7 +401,10 @@ class TestDefaultLoad:
         assert 'gmd(cite="GMD")' in out
         assert "When using the gmd command, please further cite:" in out
 
-    def test_summary_contains_fast_hint_when_not_cached(self, capsys):
+    def test_summary_contains_fast_hint_when_not_cached(self, capsys, tmp_path, monkeypatch):
+        # Isolate from any real ~/.global_macro_data cache so the "not cached"
+        # precondition holds regardless of the machine running the suite.
+        monkeypatch.setattr(gmd_module, "_CACHE_DIR", tmp_path / "empty")
         gmd(variables="rGDP", version="2025_12")
         out = capsys.readouterr().out
         assert 'gmd(version="2025_12", fast="yes")' in out
