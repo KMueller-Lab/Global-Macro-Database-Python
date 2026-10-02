@@ -460,12 +460,22 @@ def _summary(
         _emit(f"Version: {selected_version}")
 
 
+_CS_ALIAS_RE = re.compile(r"CS(\d+)_([A-Z]{3})", re.ASCII | re.IGNORECASE)
+
+
 def _normalize_source_name(source: str) -> str:
     source = source.strip()
-    if len(source) == 7 and source.startswith("CS"):
-        # Convert CS-prefixed 7-char alias e.g. "CS1_ARG" → "ARG_1"
-        return f"{source[-3:]}_{source[2]}"
+    match = _CS_ALIAS_RE.fullmatch(source)
+    if match:
+        # Convert a CS alias to its file name, e.g. "CS10_ITA" → "ITA_10"
+        return f"{match.group(2).upper()}_{match.group(1)}"
     return source
+
+
+def _cs_col_prefix(source: str) -> Optional[str]:
+    # Column prefix of a CS alias, e.g. "CS10_ITA" → "CS10"; None otherwise
+    match = _CS_ALIAS_RE.fullmatch(source.strip())
+    return f"CS{match.group(1)}" if match else None
 
 
 def _strip_source_prefix_cols(df: pd.DataFrame, source: str) -> List[str]:
@@ -820,15 +830,12 @@ def gmd(
 
     if sources is not None and str(sources) != "":
 
-        src_name = str(sources).strip()
-        cs_col_prefix = None
-        if len(src_name) == 7 and src_name.startswith("CS"):
-            # CS-aliased sources keep the original alias prefix on their data
-            # columns (e.g. "CS1_M3_GDP") even though the .dta file/source name
-            # is normalized (e.g. "ARG_1"). Remember the alias prefix so the
-            # variable column lookup below resolves against the real columns.
-            cs_col_prefix = src_name.split("_")[0]
-            src_name = _normalize_source_name(src_name)
+        # CS-aliased sources keep the original alias prefix on their data
+        # columns (e.g. "CS1_M3_GDP") even though the .dta file/source name
+        # is normalized (e.g. "ARG_1"). Remember the alias prefix so the
+        # variable column lookup below resolves against the real columns.
+        cs_col_prefix = _cs_col_prefix(str(sources))
+        src_name = _normalize_source_name(str(sources))
 
         src_tokens = _tokens(src_name)
         if len(src_tokens) > 1:
